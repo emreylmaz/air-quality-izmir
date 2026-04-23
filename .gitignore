@@ -1,0 +1,70 @@
+# Secrets — HİÇBİRİ commit edilmez
+.env
+.env.local
+.env.*.local
+.env.coolify
+.envrc
+!.env*.example
+!.envrc.example
+!.env.local.example
+!.env.coolify.example
+**/secrets.env
+.secrets
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+dist/
+build/
+
+# Docker
+.docker/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+
+# Spark / ML
+*.joblib
+*.pkl
+src/ml/models/*.joblib
+src/ml/models/*.pkl
+spark-warehouse/
+metastore_db/
+derby.log
+*.log
+
+# Coolify state cache
+.coolify-cache/
+
+# Jupyter
+.ipynb_checkpoints/
+*.ipynb
+
+# Data (never commit raw / processed data)
+data/
+backups/
+*.csv.gz
+*.parquet
+!tests/**/fixtures/*.csv
+
+# OS
+Thumbs.db
+desktop.ini

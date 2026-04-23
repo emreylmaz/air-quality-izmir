@@ -1,0 +1,38 @@
+# Ingestion worker — API collector + Kafka producer + scheduler
+# Owner: devops-engineer + data-engineer
+
+# --- Build stage ---
+FROM python:3.11-slim AS builder
+
+WORKDIR /build
+COPY pyproject.toml README.md ./
+COPY src/ ./src/
+
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y build-essential librdkafka-dev \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir ".[ingestion]"
+
+# --- Runtime stage ---
+FROM python:3.11-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+RUN apt-get update \
+    && apt-get install --no-install-recommends -y librdkafka1 \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --uid 1000 --create-home --shell /bin/bash app
+
+WORKDIR /app
+COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+COPY --chown=app:app src/ ./src/
+COPY --chown=app:app pyproject.toml README.md ./
+
+USER app
+
+# TODO (Hafta 3): data-engineer fills in the scheduler entrypoint
+# CMD ["python", "-m", "src.ingestion.scheduler"]
+CMD ["python", "-c", "import time; print('Ingestion worker placeholder — Hafta 3'); time.sleep(3600)"]

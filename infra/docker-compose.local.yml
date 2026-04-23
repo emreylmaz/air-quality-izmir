@@ -1,0 +1,149 @@
+name: airquality-local
+
+# Local dev stack — full pipeline on one host
+# Owner: devops-engineer agent
+# Usage: make up / make down
+
+networks:
+  airquality_net:
+    driver: bridge
+
+volumes:
+  pg_data:
+  kafka_data:
+  spark_checkpoints:
+  grafana_data:
+
+services:
+  postgres:
+    image: postgres:16.4-alpine
+    container_name: aqi-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-app}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local_dev_pw}
+      POSTGRES_DB: ${POSTGRES_DB:-air_quality}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ../src/storage/schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+      - ./postgres/init.sql:/docker-entrypoint-initdb.d/02_roles.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks: [airquality_net]
+
+  kafka:
+    image: bitnami/kafka:3.7
+    container_name: aqi-kafka
+    environment:
+      KAFKA_CFG_NODE_ID: "0"
+      KAFKA_CFG_PROCESS_ROLES: "controller,broker"
+      KAFKA_CFG_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093"
+      KAFKA_CFG_ADVERTISED_LISTENERS: "PLAINTEXT://kafka:9092"
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: "0@kafka:9093"
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      ALLOW_PLAINTEXT_LISTENER: "yes"
+    ports:
+      - "127.0.0.1:9092:9092"
+    volumes:
+      - kafka_data:/bitnami/kafka
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - "/opt/bitnami/kafka/bin/kafka-topics.sh --bootstrap-server=localhost:9092 --list"
+      interval: 15s
+      timeout: 10s
+      retries: 10
+    networks: [airquality_net]
+
+  spark-master:
+    image: bitnami/spark:3.5.1
+    container_name: aqi-spark-master
+    environment:
+      SPARK_MODE: master
+      SPARK_RPC_AUTHENTICATION_ENABLED: "no"
+      SPARK_RPC_ENCRYPTION_ENABLED: "no"
+    ports:
+      - "127.0.0.1:7077:7077"
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - spark_checkpoints:/opt/spark-checkpoints
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks: [airquality_net]
+
+  spark-worker:
+    image: bitnami/spark:3.5.1
+    container_name: aqi-spark-worker
+    depends_on:
+      spark-master:
+        condition: service_healthy
+    environment:
+      SPARK_MODE: worker
+      SPARK_MASTER_URL: spark://spark-master:7077
+      SPARK_WORKER_MEMORY: 2G
+      SPARK_WORKER_CORES: "2"
+    volumes:
+      - spark_checkpoints:/opt/spark-checkpoints
+    networks: [airquality_net]
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: aqi-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-local_dev_pw}
+    ports:
+      - "127.0.0.1:${GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3000/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [airquality_net]
+
+  streamlit:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.streamlit
+    container_name: aqi-streamlit
+    env_file: ../.env.local
+    ports:
+      - "127.0.0.1:${STREAMLIT_SERVER_PORT:-8501}:8501"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:8501/_stcore/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    networks: [airquality_net]
+
+  ingestion:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.ingestion
+    container_name: aqi-ingestion
+    env_file: ../.env.local
+    depends_on:
+      kafka:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    networks: [airquality_net]

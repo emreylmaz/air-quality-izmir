@@ -1,0 +1,121 @@
+# Coolify desired-state — COMMIT EDİLİR, SECRET YOK
+# Secret'lar: Magic Variables (Coolify üretir) veya sync_secrets.py (API ile push)
+#
+# Her çalıştırmada provision.py önce Coolify'dan fetch eder, sonra bu dosya ile
+# diff alır. Resource isimleri kimlik anahtarıdır — değiştirmek yeni kaynak oluşturur.
+
+project:
+  name: air-quality-izmir
+  description: "YZM536 Data Engineering — İzmir Hava Kalitesi Pipeline"
+
+environments:
+  - name: production
+  - name: preview
+
+# Coolify UI'dan önceden tanımlanmış server ismi. UUID provision.py lookup eder.
+server:
+  name: localhost          # Coolify self-hosted on VPS (host.docker.internal)
+
+# =============================================================================
+# Databases
+# =============================================================================
+
+databases:
+  - name: air-quality-db
+    type: postgresql
+    image: postgres:16.4-alpine
+    environment: production
+    is_public: false
+    # Root password Coolify'dan: SERVICE_PASSWORD_AIR_QUALITY_DB (Magic Variable)
+    # App role password'ları: init.sql içinde Magic Variables referansıyla set
+    backups:
+      - cron: "0 3 * * *"    # her gece 03:00 UTC
+        retention_days: 14
+
+# =============================================================================
+# One-click Services (Grafana vb.)
+# =============================================================================
+
+services:
+  - name: air-quality-grafana
+    # TODO: doğrula Coolify API docs'ta — service template ID Coolify UI'dan
+    # "Add Resource → Service → Search: grafana" ile teyit et. Sürüme göre
+    # "grafana-with-postgresql" vs "grafana" farklılık gösterebilir.
+    type: grafana-with-postgresql
+    environment: production
+    fqdn: http://grafana.89.167.30.91.sslip.io   # sslip.io wildcard DNS → 89.167.30.91
+
+# =============================================================================
+# Applications (GitHub repo'dan deploy)
+# =============================================================================
+
+applications:
+  - name: aqi-streamlit
+    environment: production
+    git_repository: https://github.com/emreylmaz/air-quality-izmir
+    git_branch: main
+    build_pack: dockerfile
+    dockerfile_location: /infra/Dockerfile.streamlit
+    ports_exposes: "8501"
+    fqdn: http://aqi.89.167.30.91.sslip.io   # sslip.io wildcard DNS → 89.167.30.91
+    env:
+      - key: APP_ENV
+        value: production
+        is_build_time: false
+        is_literal: true
+      - key: LOG_LEVEL
+        value: INFO
+        is_build_time: false
+        is_literal: true
+      - key: DATABASE_URL
+        # Magic Variable referansı — Coolify runtime'da çözümler
+        value: "postgresql://${SERVICE_USER_AIR_QUALITY_DB}:${SERVICE_PASSWORD_AIR_QUALITY_DB}@air-quality-db:5432/postgres"
+        is_build_time: false
+        is_literal: false
+      - key: OPENWEATHER_API_KEY
+        # sync_secrets.py push ile gerçek değer API üzerinden yazılır
+        value: "__SECRET_FROM_SYNC__"
+        is_build_time: false
+        is_literal: true
+
+  - name: aqi-ingestion
+    environment: production
+    git_repository: https://github.com/emreylmaz/air-quality-izmir
+    git_branch: main
+    build_pack: dockerfile
+    dockerfile_location: /infra/Dockerfile.ingestion
+    # Background worker — ports_exposes gerekmez
+    env:
+      - key: APP_ENV
+        value: production
+        is_build_time: false
+        is_literal: true
+      - key: LOG_LEVEL
+        value: INFO
+        is_build_time: false
+        is_literal: true
+      - key: DATABASE_URL
+        value: "postgresql://${SERVICE_USER_AIR_QUALITY_DB}:${SERVICE_PASSWORD_AIR_QUALITY_DB}@air-quality-db:5432/postgres"
+        is_build_time: false
+        is_literal: false
+      - key: KAFKA_BOOTSTRAP_SERVERS
+        # Opsiyon 1: Local Kafka'ya Tailscale tunnel ile bağlan (VPS RAM düşükse)
+        value: "kafka-local.tailscale:9092"
+        # Opsiyon 2: Coolify içinde docker-compose.coolify.yml ile Kafka
+        # value: "aqi-kafka:9092"
+        is_build_time: false
+        is_literal: true
+      - key: OPENWEATHER_API_KEY
+        value: "__SECRET_FROM_SYNC__"
+        is_build_time: false
+        is_literal: true
+
+# =============================================================================
+# Docker Compose Applications (Kafka — opsiyonel, H10'da VPS RAM'e göre karar)
+# =============================================================================
+
+# docker_compose_applications:
+#   - name: aqi-kafka
+#     environment: production
+#     compose_file: infra/docker-compose.coolify.yml
+#     fqdn: kafka.air-quality.example.com   # external TCP proxy — opsiyonel

@@ -1,0 +1,36 @@
+name: airquality-kafka
+
+# Coolify-uploadable Kafka subset (opsiyonel — VPS RAM'e göre H10'da karar)
+# Owner: coolify-engineer + devops-engineer
+# Usage: Coolify UI → Add Resource → Docker Compose → paste this file
+#        VEYA: provision.py içinde referans verilir (docker_compose_applications)
+#
+# NOT: Coolify Magic Variables için ${SERVICE_*_*} placeholder'lar Coolify
+# tarafından runtime'da çözülür. Local compose değil; Coolify'a özgü.
+
+networks:
+  kafka_net:
+    driver: bridge
+
+volumes:
+  kafka_data:
+
+services:
+  kafka:
+    image: bitnami/kafka:3.7
+    environment:
+      KAFKA_CFG_NODE_ID: "0"
+      KAFKA_CFG_PROCESS_ROLES: "controller,broker"
+      KAFKA_CFG_LISTENERS: "PLAINTEXT://:9092,CONTROLLER://:9093"
+      KAFKA_CFG_ADVERTISED_LISTENERS: "PLAINTEXT://${SERVICE_FQDN_AQI_KAFKA}:9092"
+      KAFKA_CFG_LISTENER_SECURITY_PROTOCOL_MAP: "CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT"
+      KAFKA_CFG_CONTROLLER_QUORUM_VOTERS: "0@kafka:9093"
+      KAFKA_CFG_CONTROLLER_LISTENER_NAMES: "CONTROLLER"
+      ALLOW_PLAINTEXT_LISTENER: "yes"
+      # TODO: SASL/TLS için H11'de security-compliance ile netleştir
+    ports:
+      - "9092:9092"
+    volumes:
+      - kafka_data:/bitnami/kafka
+    restart: unless-stopped
+    networks: [kafka_net]

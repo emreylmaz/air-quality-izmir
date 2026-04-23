@@ -1,0 +1,11 @@
+# direnv ile otomatik yüklenir. Kopyala: cp .envrc.example .envrc && direnv allow
+# .envrc GITIGNORED — asla commit etme
+
+# Coolify API erişimi (makinede: ~/.config/air-quality/coolify.env)
+source_env_if_exists ~/.config/air-quality/coolify.env
+
+# Local dev defaults
+dotenv_if_exists .env.local
+
+# Python virtual env
+layout python3.11

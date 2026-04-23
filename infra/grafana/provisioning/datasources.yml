@@ -1,0 +1,23 @@
+# Grafana datasource — PostgreSQL via Coolify Magic Variables
+# Owner: analytics-engineer
+# TODO (Hafta 13): datasource UID sabitle, dashboard'larda kullan.
+
+apiVersion: 1
+
+datasources:
+  - name: PostgreSQL
+    type: postgres
+    uid: postgres-air-quality
+    access: proxy
+    # Local: docker compose DNS. Production: Coolify SERVICE_URL_* resolves runtime.
+    url: ${POSTGRES_HOST:-postgres}:${POSTGRES_PORT:-5432}
+    user: ${GF_DB_USER:-grafana_ro}
+    secureJsonData:
+      password: ${GF_DB_PASSWORD:-local_grafana_pw}
+    jsonData:
+      database: ${POSTGRES_DB:-air_quality}
+      sslmode: disable
+      postgresVersion: 1600
+      timescaledb: false
+    isDefault: true
+    editable: false
