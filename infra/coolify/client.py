@@ -168,6 +168,10 @@ class CoolifyClient:
         data = self._request("GET", "/databases")
         return data.get("data", data) if isinstance(data, dict) else data
 
+    def start_database(self, db_uuid: str) -> dict:
+        """Start a stopped database. Coolify uses GET (verified 2026-04-23)."""
+        return self._request("GET", f"/databases/{db_uuid}/start")
+
     def ensure_postgresql(
         self,
         *,
@@ -276,6 +280,10 @@ class CoolifyClient:
     def list_services(self) -> list[dict]:
         data = self._request("GET", "/services")
         return data.get("data", data) if isinstance(data, dict) else data
+
+    def start_service(self, service_uuid: str) -> dict:
+        """Start a stopped one-click service. GET verb (verified 2026-04-23)."""
+        return self._request("GET", f"/services/{service_uuid}/start")
 
     def ensure_service(
         self,
