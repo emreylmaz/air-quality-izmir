@@ -6,7 +6,7 @@
 
 project:
   name: air-quality-izmir
-  description: "YZM536 Data Engineering — İzmir Hava Kalitesi Pipeline"
+  description: "YZM536 Data Engineering - Izmir Hava Kalitesi Pipeline"
 
 environments:
   - name: production
@@ -84,7 +84,9 @@ applications:
     git_branch: main
     build_pack: dockerfile
     dockerfile_location: /infra/Dockerfile.ingestion
-    # Background worker — ports_exposes gerekmez
+    # Background worker — gerçek port expose yok, ama Coolify API ports_exposes
+    # field'ını zorunlu tutuyor. Internal port, harici erişim yok.
+    ports_exposes: "8080"
     env:
       - key: APP_ENV
         value: production

@@ -8,11 +8,14 @@ buradaki her satır ya doğrulanır, ya da düzeltilir.
 
 | # | Varsayım | Doğrulama yolu | Durum |
 |---|----------|----------------|-------|
-| 1 | `POST /api/v1/databases/postgresql` payload: `project_uuid`, `environment_name`, `server_uuid`, `name`, `image`, `is_public` yeterli | İlk `make coolify-apply`, Coolify UI + API response karşılaştırma | ⏳ |
-| 2 | Service template ID `grafana-with-postgresql` güncel Coolify sürümünde mevcut | Coolify UI → Add Resource → Service → Search | ⏳ |
-| 3 | `PATCH /api/v1/applications/{uuid}/envs/bulk` payload: `{"data": [...]}` formatında kabul ediyor | İlk `sync_secrets push` çağrısı | ⏳ |
-| 4 | Env variable flag'leri `is_build_time`, `is_literal`, `is_multiline` davranışı | Test env üzerinde deneme | ⏳ |
-| 5 | `List applications` response root `{"data": [...]}` mı, düz array mı? | İlk `list_applications` log | ⏳ |
+| 1 | `POST /api/v1/databases/postgresql` payload: `project_uuid`, `environment_name`, `server_uuid`, `name`, `image`, `is_public` yeterli | İlk `make coolify-apply`, Coolify UI + API response karşılaştırma | ✅ 201 Created (2026-04-23) |
+| 2 | Service template ID `grafana-with-postgresql` güncel Coolify sürümünde mevcut | Coolify UI → Add Resource → Service → Search | ✅ 201 Created (2026-04-23) |
+| 3 | `PATCH /api/v1/applications/{uuid}/envs/bulk` payload: `{"data": [...]}` formatında kabul ediyor | İlk `sync_secrets push` çağrısı | ✅ 201 Created (2026-04-23) |
+| 4 | Env variable flag'leri `is_build_time`, `is_literal`, `is_multiline` davranışı | Test env üzerinde deneme | ⏳ (deploy sonrası runtime doğrulama) |
+| 5 | `List applications` response root `{"data": [...]}` mı, düz array mı? | İlk `list_applications` log | ✅ Düz array (2026-04-23) |
+| 9 | Coolify description field `-` (hyphen) kabul eder, `—` (em-dash) kabul ETMEZ | İlk `POST /projects` 422 validation error | ✅ ASCII-only punctuation zorunlu (2026-04-23) |
+| 10 | `POST /applications/public` payload'da `ports_exposes` **zorunlu** (background worker bile olsa) | İlk `aqi-ingestion` create 422 | ✅ Dummy port "8080" geçer (2026-04-23) |
+| 11 | Resource create ≠ deploy. Coolify explicit `/start` endpoint'i tetiklenmeden container başlamaz. | `status` komutu `exited` döner | ✅ Manuel deploy gerekli (2026-04-23) |
 | 6 | Magic Variable referansı `${SERVICE_PASSWORD_X}` env value içinde substituted oluyor | `aqi-streamlit` deploy sonrası `DATABASE_URL` env incele | ⏳ |
 | 7 | 429 response `Retry-After` header int-second ile dönüyor | Rate limit test (deliberately spam GET) | ⏳ |
 | 8 | Rezerve edilen Docker Compose "dockercompose" build-pack desteği aktif | `aqi-kafka` compose-app deploy denemesi (H10) | ⏳ |
