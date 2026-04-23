@@ -133,6 +133,34 @@ python -m infra.coolify.sync_secrets pull --app aqi-streamlit
 - ❌ Spark streaming job'ını Coolify'a deploy — lifecycle uyumsuz
 - ❌ Tarihsel veriyi Kafka'ya push — doğrudan PostgreSQL (batch kanal)
 
+## Mevcut Durum (pickup notes)
+
+**Son güncelleme:** 2026-04-23 akşamı — setup + provisioning bitmiş, implementation başlamamış.
+
+### Tamamlanan (Hafta 1-2 kapsamı)
+- ✅ 11 subagent + 8 slash komut + `.claude/settings.local.json`
+- ✅ Proje iskeleti: `src/`, `tests/`, `infra/`, `pyproject.toml`, `Makefile`
+- ✅ Secret policy: `.gitignore`, `.envrc.example`, `.pre-commit-config.yaml` + `.secrets.baseline`
+- ✅ Coolify IaC: `infra/coolify/{client,provision,sync_secrets}.py` + `config.yaml`
+- ✅ GitHub repo: https://github.com/emreylmaz/air-quality-izmir (main, public)
+- ✅ Coolify provisioning (5 kaynak canlı): `air-quality-db` (Postgres), `air-quality-grafana`,
+  `aqi-streamlit`, `aqi-ingestion`, `air-quality-izmir` (project)
+- ✅ `OPENWEATHER_API_KEY` push edildi (sync_secrets ile)
+- ✅ 4 varsayım doğrulandı (ASSUMPTIONS.md ✅ işaretli)
+
+### Sıradaki
+**`/sprint-start 3`** — Hafta 3 implementation:
+- `data-engineer` → `src/ingestion/api_collector.py`, `kafka_producer.py`, `csv_loader.py`
+- `devops-engineer` → Kafka local compose verify, `make up` smoke test
+- Acceptance: Kafka'ya akan canlı veri, temizlenmiş tarihsel CSV yüklemesi (bkz. `docs/PROJE_PLANI.md` Hafta 3)
+
+### Açık Hatırlatmalar
+- `main-backup` local branch hâlâ duruyor (Claude trailer'lı eski history güvenlik ağı) — silmeyi unutma
+- Python venv: `.venv/` altında, sadece `[coolify]` extras kurulu.
+  Hafta 3'e başlayınca `pip install -e ".[dev,ingestion,processing]"` genişlet
+- Coolify app'lerde `DATABASE_URL` Magic Variable referansı var; `ingestion` + `streamlit`
+  ilk deploy'da Postgres'e bağlanamadıysa env'leri doğrula (`sync_secrets list`)
+
 ## TODO / Açık Kararlar
 - [ ] OpenWeatherMap Student Pack yanıtı — gelene kadar `respx` mock mode
 - [x] ~~Coolify service template ID doğrulama: `grafana-with-postgresql`~~ ✅ doğrulandı (2026-04-23)
