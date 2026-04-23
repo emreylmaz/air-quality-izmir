@@ -135,6 +135,14 @@ python -m infra.coolify.sync_secrets pull --app aqi-streamlit
 
 ## TODO / Açık Kararlar
 - [ ] OpenWeatherMap Student Pack yanıtı — gelene kadar `respx` mock mode
-- [ ] Coolify service template ID doğrulama: `grafana-with-postgresql` tam ID ne?
+- [x] ~~Coolify service template ID doğrulama: `grafana-with-postgresql`~~ ✅ doğrulandı (2026-04-23)
 - [ ] Kafka Coolify custom compose mu, local-only mi (VPS RAM'e göre karar H10)
 - [ ] ML model seçimi Prophet/ARIMA — H14 veri hacmine göre
+- [ ] **Grafana domain fix** — sub-app FQDN'inde `:3000` port'u Caddy/Traefik routing'ini
+  bozuyor (default Caddy landing dönüyor). Çözüm: Coolify UI → grafana sub-app → Domains
+  → port'suz clean FQDN yaz, VEYA provision.py'ye `fqdn` field injection ekle (şu an
+  atlanıyor — Coolify UUID-based default FQDN üretiyor). Hafta 13'te analytics-engineer
+  Grafana'yı gerçekten kullanmaya başlarken hallet.
+- [ ] **provision.py `fqdn` injection** — `apply_actions` → `ensure_public_app` çağrısı
+  `fqdn` parametresini geçirmiyor. config.yaml'daki URL'ler etkisiz kalıyor. `ensure_*`
+  imzalarına `fqdn` ekle + payload'a dahil et.
