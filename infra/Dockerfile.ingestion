@@ -33,6 +33,4 @@ COPY --chown=app:app pyproject.toml README.md ./
 
 USER app
 
-# TODO (Hafta 3): data-engineer fills in the scheduler entrypoint
-# CMD ["python", "-m", "src.ingestion.scheduler"]
-CMD ["python", "-c", "import time; print('Ingestion worker placeholder — Hafta 3'); time.sleep(3600)"]
+CMD ["python", "-m", "src.ingestion.main"]
