@@ -9,6 +9,7 @@ Conventions:
 TODO: endpoint response shapes should be recorded in docs/coolify-api-notes.md
 on first real call — see docs/ASSUMPTIONS.md.
 """
+
 from __future__ import annotations
 
 import logging
@@ -120,9 +121,7 @@ class CoolifyClient:
             retry_after = int(response.headers.get("Retry-After", "60"))
             raise httpx.HTTPError(f"Rate limited, retry after {retry_after}s")
         if response.status_code >= 400:
-            raise CoolifyError(
-                f"{method} {path} -> {response.status_code}: {response.text}"
-            )
+            raise CoolifyError(f"{method} {path} -> {response.status_code}: {response.text}")
         if not response.content:
             return {}
         return response.json()

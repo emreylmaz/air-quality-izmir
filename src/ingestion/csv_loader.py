@@ -8,6 +8,7 @@ Responsibilities:
 - Unit standardization → µg/m³
 - Batch insert to fact_measurements (psycopg3 execute_batch)
 """
+
 from __future__ import annotations
 
 import logging

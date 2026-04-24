@@ -8,10 +8,12 @@ Responsibilities:
 - Retry on 429/5xx with tenacity
 - Publish to Kafka via KafkaProducer
 """
+
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +35,7 @@ IZMIR_STATIONS: list[Station] = [
 ]
 
 
-async def fetch_air_pollution(station: Station) -> dict:
+async def fetch_air_pollution(station: Station) -> dict[str, Any]:
     """Fetch latest air pollution measurement for a station.
 
     TODO: implement in Hafta 3.

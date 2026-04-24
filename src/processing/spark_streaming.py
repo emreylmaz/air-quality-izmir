@@ -9,6 +9,7 @@ Responsibilities:
 - Append to fact_measurements via JDBC
 - Checkpoint to persistent volume
 """
+
 from __future__ import annotations
 
 import logging

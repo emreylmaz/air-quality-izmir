@@ -8,6 +8,7 @@ Responsibilities:
 - Dimension upsert helpers
 - Transaction context manager
 """
+
 from __future__ import annotations
 
 import logging
@@ -25,7 +26,7 @@ def get_connection(dsn: str) -> Any:  # noqa: ANN401
     yield None
 
 
-def batch_insert_measurements(rows: list[dict]) -> int:
+def batch_insert_measurements(rows: list[dict[str, Any]]) -> int:
     """Batch insert measurement rows. Returns inserted count.
 
     TODO: implement in Hafta 4.

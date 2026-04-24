@@ -11,6 +11,7 @@ Usage:
 The reconciler is stateless (no Terraform-like local state file). Coolify is
 the single source of truth; desired state lives in ``config.yaml``.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -63,18 +64,14 @@ def plan(client: CoolifyClient, config: dict[str, Any]) -> list[Action]:
     project_name = config["project"]["name"]
     existing_projects = client.list_projects()
     if not any(p.get("name") == project_name for p in existing_projects):
-        actions.append(
-            Action(op="create", kind="project", name=project_name, details={})
-        )
+        actions.append(Action(op="create", kind="project", name=project_name, details={}))
 
     # ---- Databases ----
     existing_dbs = client.list_databases()
     db_names = {d.get("name") for d in existing_dbs}
     for db in config.get("databases", []):
         if db["name"] not in db_names:
-            actions.append(
-                Action(op="create", kind="database", name=db["name"], details=db)
-            )
+            actions.append(Action(op="create", kind="database", name=db["name"], details=db))
 
     # ---- Applications ----
     existing_apps = client.list_applications()
@@ -82,16 +79,12 @@ def plan(client: CoolifyClient, config: dict[str, Any]) -> list[Action]:
     for app in config.get("applications", []):
         current = apps_by_name.get(app["name"])
         if not current:
-            actions.append(
-                Action(op="create", kind="application", name=app["name"], details=app)
-            )
+            actions.append(Action(op="create", kind="application", name=app["name"], details=app))
             continue
         # Env diff
         desired_envs = {item["key"] for item in app.get("env", [])}
         try:
-            current_envs = {
-                item["key"] for item in client.get_app_envs(current["uuid"])
-            }
+            current_envs = {item["key"] for item in client.get_app_envs(current["uuid"])}
         except CoolifyError:
             current_envs = set()
         missing = desired_envs - current_envs
@@ -110,9 +103,7 @@ def plan(client: CoolifyClient, config: dict[str, Any]) -> list[Action]:
     service_names = {s.get("name") for s in existing_services}
     for svc in config.get("services", []):
         if svc["name"] not in service_names:
-            actions.append(
-                Action(op="create", kind="service", name=svc["name"], details=svc)
-            )
+            actions.append(Action(op="create", kind="service", name=svc["name"], details=svc))
 
     return actions
 
@@ -163,9 +154,7 @@ def _resolve_project_uuid(
     return cache[name]
 
 
-def apply_actions(
-    client: CoolifyClient, config: dict[str, Any], actions: list[Action]
-) -> None:
+def apply_actions(client: CoolifyClient, config: dict[str, Any], actions: list[Action]) -> None:
     """Execute planned actions sequentially. Idempotent at the ensure_* level."""
     uuid_cache: dict[str, str] = {}
 
@@ -173,9 +162,7 @@ def apply_actions(
         logger.info("[apply] %s %s %s", action.op, action.kind, action.name)
 
         if action.kind == "project" and action.op == "create":
-            client.ensure_project(
-                action.name, config["project"].get("description", "")
-            )
+            client.ensure_project(action.name, config["project"].get("description", ""))
             continue
 
         if action.kind == "database" and action.op == "create":
@@ -213,9 +200,7 @@ def apply_actions(
 
         if action.kind == "application" and action.op == "update_env":
             app = action.details["app"]
-            current = next(
-                a for a in client.list_applications() if a.get("name") == action.name
-            )
+            current = next(a for a in client.list_applications() if a.get("name") == action.name)
             client.upsert_envs_bulk(current["uuid"], app["env"])
             continue
 
@@ -275,9 +260,7 @@ def print_status(client: CoolifyClient, config: dict[str, Any]) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Coolify desired-state reconciler.")
-    parser.add_argument(
-        "command", choices=["plan", "apply", "status", "destroy"]
-    )
+    parser.add_argument("command", choices=["plan", "apply", "status", "destroy"])
     parser.add_argument("--config", default=str(DEFAULT_CONFIG_PATH))
     parser.add_argument(
         "--yes",

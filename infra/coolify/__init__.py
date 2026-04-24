@@ -6,6 +6,7 @@ Usage:
     python -m infra.coolify.provision status
     python -m infra.coolify.sync_secrets push
 """
+
 from infra.coolify.client import CoolifyClient, CoolifyConfig, CoolifyError
 
 __all__ = ["CoolifyClient", "CoolifyConfig", "CoolifyError"]

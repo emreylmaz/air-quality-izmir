@@ -3,6 +3,7 @@
 TODO (Hafta 13): Full implementation by `analytics-engineer` agent.
 Run: `streamlit run src/presentation/streamlit/app.py`
 """
+
 from __future__ import annotations
 
 import streamlit as st

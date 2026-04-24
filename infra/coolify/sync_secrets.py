@@ -13,6 +13,7 @@ Usage:
     python -m infra.coolify.sync_secrets pull --app aqi-streamlit
     python -m infra.coolify.sync_secrets list
 """
+
 from __future__ import annotations
 
 import argparse
@@ -43,9 +44,7 @@ def parse_env_file(path: Path) -> dict[str, str]:
         if not key:
             continue
         if key.startswith(MAGIC_PREFIXES):
-            logger.warning(
-                "Skipping %s (Magic Variable — Coolify owns this value).", key
-            )
+            logger.warning("Skipping %s (Magic Variable — Coolify owns this value).", key)
             continue
         result[key] = value
     return result
@@ -81,8 +80,7 @@ def push(
         for key, value in secrets.items()
     ]
     client.upsert_envs_bulk(app["uuid"], variables)
-    print(f"[OK] Pushed {len(variables)} secret(s) to {app_name}: "
-          f"{', '.join(sorted(secrets))}")
+    print(f"[OK] Pushed {len(variables)} secret(s) to {app_name}: " f"{', '.join(sorted(secrets))}")
 
 
 def pull(client: CoolifyClient, app_name: str, reveal: bool = False) -> None:
@@ -92,10 +90,7 @@ def pull(client: CoolifyClient, app_name: str, reveal: bool = False) -> None:
     print(f"\nEnv variables for {app_name}:")
     for item in sorted(envs, key=lambda e: e.get("key", "")):
         key = item.get("key", "<?>")
-        if reveal:
-            value = item.get("value", "")
-        else:
-            value = "***"
+        value = item.get("value", "") if reveal else "***"
         marker = "[magic]" if key.startswith(MAGIC_PREFIXES) else ""
         print(f"  {key}={value} {marker}".rstrip())
 

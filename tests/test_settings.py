@@ -1,4 +1,5 @@
 """Smoke test — settings load from environment without real secrets."""
+
 from __future__ import annotations
 
 import os

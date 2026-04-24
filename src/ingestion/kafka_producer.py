@@ -8,9 +8,11 @@ Responsibilities:
 - Key = f"{station_id}:{iso_hour}"
 - Retry on transient failures, DLQ on malformed payloads
 """
+
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +28,7 @@ class KafkaProducerWrapper:
         self.default_topic = default_topic
         # TODO: init confluent_kafka.Producer
 
-    def publish(self, key: str, value: dict, topic: str | None = None) -> None:
+    def publish(self, key: str, value: dict[str, Any], topic: str | None = None) -> None:
         """Publish a JSON-serializable value to Kafka."""
         raise NotImplementedError("Hafta 3: data-engineer agent implements this")
 

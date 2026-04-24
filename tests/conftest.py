@@ -3,6 +3,7 @@
 Owner: data-quality-engineer agent.
 Markers (defined in pyproject): slow, integration, e2e
 """
+
 from __future__ import annotations
 
 from collections.abc import Iterator

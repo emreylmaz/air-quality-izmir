@@ -9,6 +9,7 @@ Responsibilities:
 - Overall AQI = max(sub-indices)
 - Category label: Good / Moderate / USG / Unhealthy / Very Unhealthy / Hazardous
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -16,9 +17,7 @@ from typing import Literal
 
 PollutantCode = Literal["pm25", "pm10", "o3_8h", "no2", "so2", "co"]
 
-AQICategory = Literal[
-    "Good", "Moderate", "USG", "Unhealthy", "Very Unhealthy", "Hazardous"
-]
+AQICategory = Literal["Good", "Moderate", "USG", "Unhealthy", "Very Unhealthy", "Hazardous"]
 
 
 @dataclass(frozen=True)
