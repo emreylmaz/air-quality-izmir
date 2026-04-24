@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     kafka_topic_raw: str = "air-quality-raw"
     kafka_topic_weather: str = "weather-raw"
     kafka_topic_dlq: str = "air-quality-dlq"
+    kafka_client_id: str = "aqi-ingestion"
 
     # OpenWeatherMap
     openweather_api_key: SecretStr = Field(default=SecretStr(""))
