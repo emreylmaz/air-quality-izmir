@@ -1,0 +1,64 @@
+# İzmir hava kalitesi istasyon kataloğu (6 nokta)
+#
+# Lat/lon koordinatları:
+#   - İlçe merkezleri yaklaşık değerleridir (OpenStreetMap / İBB açık veri).
+#   - Çevre ve Şehircilik Bakanlığı SIM portalında yer alan resmi
+#     istasyonların gerçek koordinatları farklı olabilir; H10'da SIM
+#     entegrasyonu yapılırsa burada güncellenecek.
+#   - OpenWeatherMap /air_pollution endpoint lat/lon'a bind olduğu için
+#     ilçe merkezi yeterli (10-15 km grid çözünürlük).
+#
+# Validation (src/ingestion/stations.py):
+#   lat 38.0 - 38.8, lon 26.8 - 27.5
+#
+# Kategoriler:
+#   urban_traffic        — yoğun trafik, merkezi
+#   urban_residential    — üniversite + yerleşim
+#   coastal_residential  — sahil yerleşim
+#   urban_central        — merkez, kongre/turizm
+#   industrial           — sanayi (rafineri, demir-çelik)
+
+stations:
+  - id: konak
+    name: Konak
+    district: Konak
+    lat: 38.4192
+    lon: 27.1287
+    category: urban_traffic
+
+  - id: bornova
+    name: Bornova
+    district: Bornova
+    lat: 38.4700
+    lon: 27.2200
+    category: urban_residential
+
+  - id: karsiyaka
+    name: Karşıyaka
+    district: Karşıyaka
+    lat: 38.4612
+    lon: 27.1156
+    category: coastal_residential
+
+  - id: alsancak
+    name: Alsancak
+    district: Konak
+    lat: 38.4380
+    lon: 27.1430
+    category: urban_central
+
+  - id: bayrakli
+    name: Bayraklı
+    district: Bayraklı
+    lat: 38.4615
+    lon: 27.1670
+    category: urban_residential
+
+  # Aliağa: petrol rafinerisi + demir-çelik tesisleri.
+  # PM10/SO2/NOx profili diğer istasyonlardan belirgin farklı.
+  - id: aliaga
+    name: Aliağa
+    district: Aliağa
+    lat: 38.7990
+    lon: 26.9720
+    category: industrial

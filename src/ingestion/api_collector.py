@@ -12,32 +12,25 @@ Responsibilities:
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
 from typing import Any
+
+from src.ingestion.stations import Station, load_stations
 
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
-class Station:
-    """Izmir measurement station metadata."""
+def get_izmir_stations() -> list[Station]:
+    """Return the Izmir station catalog.
 
-    id: int
-    name: str
-    lat: float
-    lon: float
-    district: str
-
-
-# TODO: move to config/stations.yaml, loaded at startup
-IZMIR_STATIONS: list[Station] = [
-    # Station(id=1, name="Konak", lat=38.4192, lon=27.1287, district="Konak"),
-]
+    Lazy loader so module import does not touch the filesystem; tests and
+    the scheduler call this on demand.
+    """
+    return load_stations()
 
 
 async def fetch_air_pollution(station: Station) -> dict[str, Any]:
     """Fetch latest air pollution measurement for a station.
 
-    TODO: implement in Hafta 3.
+    TODO: implement in Hafta 3 (Task 3).
     """
     raise NotImplementedError("Hafta 3: data-engineer agent implements this")
