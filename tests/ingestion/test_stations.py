@@ -8,9 +8,9 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from src.ingestion.stations import Station, load_stations
+from src.ingestion.stations import DEFAULT_STATIONS_PATH, Station, load_stations
 
-CATALOG_PATH = Path("config/stations.yaml")
+CATALOG_PATH = DEFAULT_STATIONS_PATH
 
 
 @pytest.fixture(scope="module")
@@ -22,6 +22,21 @@ def stations() -> list[Station]:
 def test_catalog_file_exists() -> None:
     """`config/stations.yaml` must be checked into the repo."""
     assert CATALOG_PATH.is_file(), f"missing catalog: {CATALOG_PATH}"
+
+
+def test_default_path_resolves_independent_of_cwd(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Catalog must load even when invoked from a different working directory.
+
+    Regression for the Sprint 03 review finding: `Path("config/stations.yaml")`
+    resolved relative to cwd, so the Docker image (where cwd=/app and config/
+    is alongside src/) only worked by accident. The path is now anchored to
+    the package, so chdir'ing elsewhere still finds the file.
+    """
+    monkeypatch.chdir(tmp_path)
+    catalog = load_stations()
+    assert len(catalog) == 6
 
 
 def test_load_returns_six_stations(stations: list[Station]) -> None:

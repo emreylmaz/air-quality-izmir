@@ -21,7 +21,12 @@ StationCategory = Literal[
     "industrial",
 ]
 
-DEFAULT_STATIONS_PATH = Path("config/stations.yaml")
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+DEFAULT_STATIONS_PATH = _REPO_ROOT / "config" / "stations.yaml"
+"""Repo-root anchored so the catalog resolves regardless of the
+process cwd. The runtime image copies `config/` next to `src/`, so
+`parents[2]` lands on `/app` in containers and the project root on a
+dev machine."""
 
 
 class Station(BaseModel):
