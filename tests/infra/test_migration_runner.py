@@ -350,3 +350,330 @@ class TestRunIntegration:
 
         path.write_text("CREATE TABLE x (id BIGINT);\n", encoding="utf-8")
         assert main(["--dsn", pg_container]) == 2  # MigrationError exit
+
+
+# ---------------------------------------------------------------------------
+# Migration 0002 — unit tests (file shape, idempotency markers, no DROP)
+# ---------------------------------------------------------------------------
+
+
+_MIGRATION_0002_SQL = (
+    Path(__file__).resolve().parents[2] / "infra" / "migrations" / "0002_star_schema_expand.sql"
+)
+_MIGRATION_0002_DOWN_SQL = (
+    Path(__file__).resolve().parents[2]
+    / "infra"
+    / "migrations"
+    / "0002_star_schema_expand.down.sql"
+)
+
+
+class TestMigration0002Files:
+    """Static checks on 0002 SQL files — no DB required.
+
+    These guard against accidental regression of the 0002 contract:
+    forward script must be additive + idempotent, rollback script must
+    contain the DROP statements documented in sprint-04 T2 DoD.
+    """
+
+    def test_forward_sql_exists(self) -> None:
+        assert (
+            _MIGRATION_0002_SQL.is_file()
+        ), f"0002 forward migration missing at {_MIGRATION_0002_SQL}"
+
+    def test_down_sql_exists(self) -> None:
+        assert (
+            _MIGRATION_0002_DOWN_SQL.is_file()
+        ), f"0002 rollback companion missing at {_MIGRATION_0002_DOWN_SQL}"
+
+    def test_forward_uses_idempotent_patterns(self) -> None:
+        """`ADD COLUMN IF NOT EXISTS`, `CREATE TABLE IF NOT EXISTS`, and a
+        `DO $$ BEGIN ... pg_constraint ... END $$` guard for the UNIQUE
+        constraint must all be present.
+        """
+        body = _MIGRATION_0002_SQL.read_text(encoding="utf-8")
+        assert "ADD COLUMN IF NOT EXISTS elevation_m" in body
+        assert "ADD COLUMN IF NOT EXISTS updated_at" in body
+        assert "CREATE TABLE IF NOT EXISTS dim_time" in body
+        assert "DO $$" in body
+        assert "pg_constraint" in body
+        assert "fact_measurements_unique_reading" in body
+
+    def test_forward_has_no_drop_or_extension(self) -> None:
+        """Sprint-04 ret kriterleri: DROP yok, CREATE EXTENSION yok."""
+        body = _MIGRATION_0002_SQL.read_text(encoding="utf-8").upper()
+        # Comment block uses the words DROP/EXTENSION descriptively; strip
+        # comment lines before scanning so they do not produce false hits.
+        code_only = "\n".join(
+            line for line in body.splitlines() if not line.lstrip().startswith("--")
+        )
+        assert "DROP TABLE" not in code_only
+        assert "DROP COLUMN" not in code_only
+        assert "DROP CONSTRAINT" not in code_only
+        assert "CREATE EXTENSION" not in code_only
+
+    def test_forward_does_not_self_manage_transaction(self) -> None:
+        """Runner wraps each file in a transaction; nested BEGIN/COMMIT
+        breaks that contract (psycopg would error on nested begin).
+        """
+        body = _MIGRATION_0002_SQL.read_text(encoding="utf-8")
+        # Strip line comments first.
+        code_only = "\n".join(
+            line for line in body.splitlines() if not line.lstrip().startswith("--")
+        )
+        # Allow `BEGIN` only inside the `DO $$ BEGIN ... END $$` block.
+        # A standalone "BEGIN;" or "COMMIT;" must not appear.
+        assert "\nBEGIN;" not in code_only
+        assert "\nCOMMIT;" not in code_only
+
+    def test_down_lists_all_rollback_statements(self) -> None:
+        body = _MIGRATION_0002_DOWN_SQL.read_text(encoding="utf-8")
+        assert "DROP CONSTRAINT IF EXISTS fact_measurements_unique_reading" in body
+        assert "DROP TABLE IF EXISTS dim_time" in body
+        assert "DROP COLUMN IF EXISTS updated_at" in body
+        assert "DROP COLUMN IF EXISTS elevation_m" in body
+
+    def test_runner_skips_down_sql(self) -> None:
+        """0002.down.sql must NOT be picked up by discover_migrations."""
+        migrations = discover_migrations()
+        names = {m.path.name for m in migrations}
+        assert "0002_star_schema_expand.sql" in names
+        assert "0002_star_schema_expand.down.sql" not in names
+
+
+# ---------------------------------------------------------------------------
+# Migration 0002 — integration tests (real PG 16 container)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.integration
+class TestMigration0002Integration:
+    """End-to-end: 0001 baseline + 0002 expand against a live PG 16."""
+
+    def test_applies_after_baseline(self, pg_container: str) -> None:
+        """Sıralı apply: önce 0001, sonra 0002. schema_migrations'ta
+        her iki version da kayıtlı olmalı.
+        """
+        _drop_public_schema(pg_container)
+        applied = run(pg_container)
+        assert applied >= 2  # at least baseline + 0002
+
+        with psycopg.connect(pg_container) as conn, conn.cursor() as cur:
+            cur.execute("SELECT version FROM schema_migrations ORDER BY version")
+            versions = [r[0] for r in cur.fetchall()]
+        assert "0001" in versions
+        assert "0002" in versions
+
+    def test_dim_station_gains_new_columns(self, pg_container: str) -> None:
+        """`elevation_m` (NUMERIC, nullable) ve `updated_at` (TIMESTAMPTZ)
+        kolonları eklenir; baseline'daki created_at/category bozulmaz.
+        """
+        _drop_public_schema(pg_container)
+        run(pg_container)
+
+        with psycopg.connect(pg_container) as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT column_name, data_type, is_nullable
+                FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'dim_station'
+                ORDER BY ordinal_position
+                """,
+            )
+            cols = {row[0]: (row[1], row[2]) for row in cur.fetchall()}
+
+        # Baseline kolonları korunmuş.
+        for baseline_col in (
+            "station_id",
+            "slug",
+            "name",
+            "district",
+            "lat",
+            "lon",
+            "category",
+            "created_at",
+        ):
+            assert baseline_col in cols, f"baseline column dropped: {baseline_col}"
+
+        # 0002 yeni kolonları.
+        assert "elevation_m" in cols
+        assert cols["elevation_m"][0] == "numeric"
+        assert cols["elevation_m"][1] == "YES"  # nullable
+        assert "updated_at" in cols
+        # information_schema returns 'timestamp with time zone' for TIMESTAMPTZ.
+        assert cols["updated_at"][0] == "timestamp with time zone"
+        assert cols["updated_at"][1] == "NO"  # NOT NULL
+
+    def test_dim_time_table_has_expected_shape(self, pg_container: str) -> None:
+        """dim_time: 9 kolon (time_id, measured_at + 7 attribute), PK on
+        time_id, UNIQUE on measured_at, season CHECK constraint.
+        """
+        _drop_public_schema(pg_container)
+        run(pg_container)
+
+        with psycopg.connect(pg_container) as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT column_name
+                FROM information_schema.columns
+                WHERE table_schema = 'public' AND table_name = 'dim_time'
+                ORDER BY ordinal_position
+                """,
+            )
+            cols = [row[0] for row in cur.fetchall()]
+
+        expected_cols = [
+            "time_id",
+            "measured_at",
+            "year",
+            "month",
+            "day",
+            "hour",
+            "dow",
+            "season",
+            "is_holiday",
+        ]
+        assert cols == expected_cols, f"dim_time shape mismatch: {cols!r}"
+
+        # PK + UNIQUE constraints.
+        with psycopg.connect(pg_container) as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT conname, contype
+                FROM pg_constraint
+                WHERE conrelid = 'public.dim_time'::regclass
+                ORDER BY conname
+                """,
+            )
+            constraints = {row[0]: row[1] for row in cur.fetchall()}
+
+        # contype: 'p' = primary key, 'u' = unique, 'c' = check.
+        contypes = list(constraints.values())
+        assert "p" in contypes, "dim_time missing PRIMARY KEY"
+        assert "u" in contypes, "dim_time missing UNIQUE constraint"
+        assert "c" in contypes, "dim_time missing CHECK constraint (season/month/day/hour/dow)"
+
+    def test_pollutant_seed_survives_expand(self, pg_container: str) -> None:
+        """0001 baseline'da seed edilen 6 satır 0002 sonrası KAYBOLMAMALI."""
+        _drop_public_schema(pg_container)
+        run(pg_container)
+
+        with psycopg.connect(pg_container) as conn, conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM dim_pollutant")
+            row = cur.fetchone()
+            assert row is not None
+            assert row[0] == 6, f"pollutant seed lost: count={row[0]}"
+
+            cur.execute("SELECT code FROM dim_pollutant ORDER BY code")
+            codes = {r[0] for r in cur.fetchall()}
+        assert codes == {"co", "no2", "o3", "pm10", "pm25", "so2"}
+
+    def test_unique_constraint_blocks_duplicate_reading(
+        self,
+        pg_container: str,
+    ) -> None:
+        """fact_measurements_unique_reading: aynı (station_id, pollutant_id,
+        measured_at, source) ikinci INSERT'ta UniqueViolation atmalı.
+        """
+        _drop_public_schema(pg_container)
+        run(pg_container)
+
+        with psycopg.connect(pg_container) as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO dim_station (slug, name, district, lat, lon, category)
+                    VALUES ('test', 'Test Station', 'Konak', 38.4, 27.1, 'urban')
+                    RETURNING station_id
+                    """,
+                )
+                row = cur.fetchone()
+                assert row is not None
+                station_id = row[0]
+                cur.execute("SELECT pollutant_id FROM dim_pollutant WHERE code = 'pm25'")
+                row = cur.fetchone()
+                assert row is not None
+                pollutant_id = row[0]
+
+                cur.execute(
+                    """
+                    INSERT INTO fact_measurements
+                        (station_id, pollutant_id, measured_at, value, source)
+                    VALUES (%s, %s, '2026-04-25 10:00:00+00', 12.5, 'csv')
+                    """,
+                    (station_id, pollutant_id),
+                )
+            conn.commit()
+
+            # Second INSERT with same conflict key → UniqueViolation.
+            with (
+                pytest.raises(psycopg.errors.UniqueViolation),
+                conn.cursor() as cur,
+            ):
+                cur.execute(
+                    """
+                    INSERT INTO fact_measurements
+                        (station_id, pollutant_id, measured_at, value, source)
+                    VALUES (%s, %s, '2026-04-25 10:00:00+00', 99.9, 'csv')
+                    """,
+                    (station_id, pollutant_id),
+                )
+            conn.rollback()
+
+            # Different `source` for the same (station, pollutant, ts) IS allowed —
+            # source is part of the unique key by design (TD-09 spec).
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO fact_measurements
+                        (station_id, pollutant_id, measured_at, value, source)
+                    VALUES (%s, %s, '2026-04-25 10:00:00+00', 13.7, 'openweather')
+                    """,
+                    (station_id, pollutant_id),
+                )
+            conn.commit()
+
+    def test_unique_constraint_has_stable_name(self, pg_container: str) -> None:
+        """T4 (csv_loader) `ON CONFLICT ON CONSTRAINT fact_measurements_unique_reading`
+        kullanacak — constraint adı sabit kalmalı.
+        """
+        _drop_public_schema(pg_container)
+        run(pg_container)
+
+        with psycopg.connect(pg_container) as conn, conn.cursor() as cur:
+            cur.execute(
+                """
+                SELECT conname
+                FROM pg_constraint
+                WHERE conrelid = 'public.fact_measurements'::regclass
+                  AND contype = 'u'
+                """,
+            )
+            unique_names = {row[0] for row in cur.fetchall()}
+        assert "fact_measurements_unique_reading" in unique_names
+
+    def test_full_chain_is_idempotent(self, pg_container: str) -> None:
+        """`make migrate` ikinci çağrıda 0 migration uygular (drift yok)."""
+        _drop_public_schema(pg_container)
+        first = run(pg_container)
+        second = run(pg_container)
+        assert first >= 2  # baseline + 0002 (and possibly later sprints)
+        assert second == 0
+
+    def test_dim_station_alter_is_idempotent_on_rerun(
+        self,
+        pg_container: str,
+    ) -> None:
+        """Drift guard'ı manuel olarak bypass'layıp aynı 0002 SQL'ini iki
+        kez ardışık execute etsek bile `ADD COLUMN IF NOT EXISTS` + DO block
+        sayesinde hata vermez. Bu, runner'ın checksum guard'ı olmasaydı
+        bile şema sözleşmesinin tek başına idempotent olduğunu kanıtlar.
+        """
+        _drop_public_schema(pg_container)
+        run(pg_container)
+
+        sql_body = _MIGRATION_0002_SQL.read_text(encoding="utf-8")
+        with psycopg.connect(pg_container) as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql_body)  # Should be a no-op on second apply.
+            conn.commit()
