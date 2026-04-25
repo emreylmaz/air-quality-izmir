@@ -164,6 +164,61 @@ def test_to_long_format_pivots_fixture() -> None:
     assert str(long["measured_at"].dt.tz) == "UTC"
 
 
+def test_to_long_format_localises_naive_timestamps_to_source_tz() -> None:
+    """Naive `2024-01-01 00:00` is Europe/Istanbul (UTC+03), not UTC.
+
+    Default source_timezone is Europe/Istanbul, so the persisted
+    UTC value should be `2023-12-31T21:00`. Treating the input as
+    UTC (the pre-fix behaviour) would yield `2024-01-01T00:00Z` —
+    a 3-hour drift that bites every downstream join.
+    """
+    df = pd.DataFrame({"Tarih": ["2024-01-01 00:00", "2024-01-01 12:00"], "PM10": [10.0, 20.0]})
+    long = to_long_format(df)
+    assert str(long["measured_at"].dt.tz) == "UTC"
+    assert long["measured_at"].iloc[0] == pd.Timestamp("2023-12-31 21:00", tz="UTC")
+    assert long["measured_at"].iloc[1] == pd.Timestamp("2024-01-01 09:00", tz="UTC")
+
+
+def test_to_long_format_passes_through_tz_aware_input() -> None:
+    """Already-tz-aware timestamps must be converted to UTC, not re-localised."""
+    df = pd.DataFrame(
+        {"Tarih": ["2024-01-01T00:00:00+00:00", "2024-01-01T05:00:00-05:00"], "PM10": [1.0, 2.0]}
+    )
+    long = to_long_format(df, source_timezone="Europe/Istanbul")
+    # Both should land on UTC; second is `05:00 EST` = `10:00 UTC`.
+    assert long["measured_at"].iloc[0] == pd.Timestamp("2024-01-01 00:00", tz="UTC")
+    assert long["measured_at"].iloc[1] == pd.Timestamp("2024-01-01 10:00", tz="UTC")
+
+
+def test_to_long_format_accepts_none_source_timezone_for_already_utc_csv() -> None:
+    """When the CSV is already UTC-naive, caller passes `source_timezone=None`."""
+    df = pd.DataFrame({"Tarih": ["2024-01-01 00:00"], "PM10": [10.0]})
+    long = to_long_format(df, source_timezone=None)
+    assert long["measured_at"].iloc[0] == pd.Timestamp("2024-01-01 00:00", tz="UTC")
+
+
+def test_to_long_format_drops_dst_edge_naive_timestamps() -> None:
+    """Spring-forward / autumn-fold timestamps (pre-2016 TR) become NaT.
+
+    `2015-03-29 03:30` does not exist in Europe/Istanbul (clocks jumped
+    02:00 → 03:00). With `nonexistent='NaT'` the row is dropped instead
+    of silently becoming a different instant.
+    """
+    df = pd.DataFrame(
+        {
+            "Tarih": ["2015-03-29 02:30", "2015-03-29 04:00"],
+            "PM10": [10.0, 20.0],
+        }
+    )
+    long = to_long_format(df)
+    # 02:30 either localises to a real instant or drops to NaT depending on
+    # the exact moment Europe/Istanbul jumped; 04:00 is unambiguous so it
+    # must survive.
+    valid = long.dropna(subset=["measured_at"])
+    assert len(valid) >= 1
+    assert valid["measured_at"].max() == pd.Timestamp("2015-03-29 01:00", tz="UTC")
+
+
 def test_to_long_format_drops_unparseable_dates() -> None:
     df = pd.DataFrame(
         {
@@ -494,10 +549,18 @@ def test_main_invokes_load_csv(
     fake_psycopg.connect = MagicMock(return_value=fake_conn)
     monkeypatch.setitem(__import__("sys").modules, "psycopg", fake_psycopg)
 
-    def fake_load(path: Path, station_id: int, *, conn: Any, source: str) -> int:
+    def fake_load(
+        path: Path,
+        station_id: int,
+        *,
+        conn: Any,
+        source: str,
+        source_timezone: str | None,
+    ) -> int:
         captured["path"] = path
         captured["station_id"] = station_id
         captured["source"] = source
+        captured["source_timezone"] = source_timezone
         return 7
 
     monkeypatch.setattr(csv_module, "load_csv", fake_load)

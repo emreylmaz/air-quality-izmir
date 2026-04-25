@@ -88,6 +88,11 @@ ENCODING_CANDIDATES: Final[tuple[str, ...]] = ("utf-8-sig", "cp1254", "utf-8")
 CO_MG_TO_UG_FACTOR: Final[float] = 1000.0
 DEFAULT_FFILL_LIMIT_HOURS: Final[int] = 3
 IQR_MULTIPLIER: Final[float] = 1.5
+
+# Çevre Bakanlığı SIM exports record civil time, not UTC. Türkiye has been
+# fixed at UTC+03 with no DST since 2016, but pytz/zoneinfo carries the full
+# DST history so historical ranges (pre-2016) are converted correctly.
+DEFAULT_SOURCE_TIMEZONE: Final[str] = "Europe/Istanbul"
 INSERT_SQL: Final[str] = (
     "INSERT INTO fact_measurements "
     "(station_id, pollutant_id, measured_at, value, source) "
@@ -134,6 +139,46 @@ def _find_date_column(columns: Sequence[str]) -> str:
     )
 
 
+def _parse_timestamps(
+    raw: pd.Series,
+    *,
+    source_timezone: str | None,
+) -> pd.Series:
+    """Parse a date column → tz-aware UTC ``datetime64[ns, UTC]``.
+
+    - ``dayfirst=True`` so ``01.01.2024 00:00`` (TR) parses as Jan 1.
+    - Tz-aware inputs (uniform or mixed offsets): converted to UTC.
+    - Naive inputs with ``source_timezone``: localised then converted.
+    - Naive inputs with ``source_timezone=None``: localised to UTC
+      directly (caller asserts the data is already UTC).
+
+    The naive vs aware detection is done by *probing*: a first parse
+    without ``utc=True`` so naive input keeps tz=None and we can apply
+    the configured source-tz. If pandas refuses (mixed offsets in the
+    column), we re-parse with ``utc=True`` which forces UTC on every
+    row regardless of offset.
+    """
+    try:
+        parsed = pd.to_datetime(raw, errors="coerce", dayfirst=True)
+    except ValueError:
+        # `Mixed timezones detected` — the column has more than one
+        # offset (e.g. some +00:00, some -05:00). pandas cannot pick
+        # a single-tz column for us, so we ask it to convert everything
+        # to UTC up-front.
+        return pd.to_datetime(raw, errors="coerce", dayfirst=True, utc=True)
+
+    if parsed.dt.tz is None:
+        if source_timezone is None:
+            return parsed.dt.tz_localize("UTC")
+        localised = parsed.dt.tz_localize(
+            source_timezone,
+            ambiguous="NaT",
+            nonexistent="NaT",
+        )
+        return localised.dt.tz_convert("UTC")
+    return parsed.dt.tz_convert("UTC")
+
+
 def _resolve_pollutant_columns(
     columns: Sequence[str],
     *,
@@ -164,13 +209,27 @@ def to_long_format(
     df: pd.DataFrame,
     *,
     column_map: Mapping[str, str] | None = None,
+    source_timezone: str | None = DEFAULT_SOURCE_TIMEZONE,
 ) -> pd.DataFrame:
     """Pivot wide CSV → long `(measured_at, pollutant_code, value)`.
+
+    Args:
+        df: Wide CSV frame as returned by :func:`read_csv`.
+        column_map: Optional override of the header→pollutant-code map.
+        source_timezone: IANA tz name applied to *naive* timestamps. The
+            Çevre Bakanlığı SIM portal exports civil-time strings; treating
+            them as UTC produces a 3-hour drift. Set to ``None`` to skip
+            localisation when the input is already UTC. Tz-aware inputs
+            are converted to UTC regardless of this setting.
 
     Rows whose date column fails parsing are dropped. Pollutant columns
     are coerced numeric; non-numeric cells become NaN and are kept for
     the cleaning pipeline to handle (negative-drop ignores NaN; ffill
     can fill them).
+
+    DST-edge handling: ambiguous (autumn fold) and non-existent (spring
+    forward) timestamps become ``NaT`` and are dropped. Türkiye has been
+    on permanent UTC+03 since 2016 so this only matters for older ranges.
     """
     mapping = dict(column_map or DEFAULT_POLLUTANT_COLUMN_MAP)
     df = _normalise_columns(df)
@@ -185,8 +244,7 @@ def to_long_format(
             f"csv_columns={list(df.columns)}"
         )
 
-    # `dayfirst=True` covers `01.01.2024 00:00` (TR) without breaking ISO.
-    parsed_dt = pd.to_datetime(df[date_col], errors="coerce", dayfirst=True, utc=True)
+    parsed_dt = _parse_timestamps(df[date_col], source_timezone=source_timezone)
     df = df.assign(**{date_col: parsed_dt}).dropna(subset=[date_col])
 
     for col in pollutant_cols:
@@ -357,6 +415,7 @@ def load_csv(
     conn: psycopg.Connection,
     column_map: Mapping[str, str] | None = None,
     source: str = "csv",
+    source_timezone: str | None = DEFAULT_SOURCE_TIMEZONE,
 ) -> int:
     """Read → clean → insert. Returns number of rows persisted.
 
@@ -368,9 +427,12 @@ def load_csv(
         source: Value written to `fact_measurements.source` (default
             `'csv'` so historical loads are distinguishable from the
             live OpenWeather stream).
+        source_timezone: Tz used to localise naive CSV timestamps.
+            Default `Europe/Istanbul` matches Çevre Bakanlığı SIM
+            exports. Pass `None` if the file already records UTC.
     """
     df = read_csv(Path(path))
-    long = to_long_format(df, column_map=column_map)
+    long = to_long_format(df, column_map=column_map, source_timezone=source_timezone)
     cleaned = clean(long)
     if cleaned.empty:
         _LOG.info("csv had no rows after cleaning: path=%s", path)
@@ -401,13 +463,30 @@ def main(argv: Sequence[str] | None = None) -> int:
         default="csv",
         help="Value for fact_measurements.source (default: csv)",
     )
+    parser.add_argument(
+        "--source-timezone",
+        type=str,
+        default=DEFAULT_SOURCE_TIMEZONE,
+        help=(
+            "IANA tz applied to naive CSV timestamps. "
+            f"Default: {DEFAULT_SOURCE_TIMEZONE} (Çevre Bakanlığı SIM convention). "
+            "Pass an empty string to skip localisation when the file is already UTC."
+        ),
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
     settings = get_settings()
     dsn = settings.database_url.get_secret_value()
+    src_tz = args.source_timezone or None
     with psycopg.connect(dsn) as conn:
-        n = load_csv(args.path, args.station_id, conn=conn, source=args.source)
+        n = load_csv(
+            args.path,
+            args.station_id,
+            conn=conn,
+            source=args.source,
+            source_timezone=src_tz,
+        )
     print(f"Inserted {n} rows", file=sys.stderr)
     return 0
 
