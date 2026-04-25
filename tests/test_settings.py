@@ -28,7 +28,7 @@ def test_settings_reads_env_overrides(monkeypatch) -> None:  # noqa: ANN001
 
 def test_secrets_not_visible_in_repr() -> None:
     """SecretStr must mask value in repr output."""
-    os.environ["OPENWEATHER_API_KEY"] = "leaky_secret_do_not_print"
+    os.environ["OPENWEATHER_API_KEY"] = "leaky_secret_do_not_print"  # pragma: allowlist secret
     settings = Settings()
     assert "leaky_secret_do_not_print" not in repr(settings)
     del os.environ["OPENWEATHER_API_KEY"]

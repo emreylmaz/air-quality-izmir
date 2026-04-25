@@ -16,9 +16,9 @@ def test_settings() -> dict[str, str]:
     """Test-safe settings overrides. No real secrets."""
     return {
         "APP_ENV": "local",
-        "DATABASE_URL": "postgresql://app:test@localhost:5432/air_quality_test",
+        "DATABASE_URL": "postgresql://app:test@localhost:5432/air_quality_test",  # pragma: allowlist secret
         "KAFKA_BOOTSTRAP_SERVERS": "localhost:19092",
-        "OPENWEATHER_API_KEY": "test_key_not_real",
+        "OPENWEATHER_API_KEY": "test_key_not_real",  # pragma: allowlist secret
         "LOG_LEVEL": "DEBUG",
     }
 
