@@ -1,4 +1,5 @@
 .PHONY: help install up down logs ps test lint format typecheck precommit \
+        migrate migrate-dry-run \
         coolify-plan coolify-apply coolify-status coolify-sync \
         clean build
 
@@ -17,6 +18,8 @@ help:
 	@echo "  format          - ruff format (kod düzenle)"
 	@echo "  typecheck       - mypy strict"
 	@echo "  precommit       - Tüm pre-commit hook'larını çalıştır"
+	@echo "  migrate         - Pending PostgreSQL migration'larını uygula (idempotent)"
+	@echo "  migrate-dry-run - Pending migration'ları listele, uygulama"
 	@echo "  coolify-plan    - Coolify desired-state diff (dry-run)"
 	@echo "  coolify-apply   - Coolify provisioning (onaylı)"
 	@echo "  coolify-status  - Coolify kaynak sağlık raporu"
@@ -47,18 +50,24 @@ test:
 	pytest tests/ --cov=src -m "not slow"
 
 lint:
-	ruff check src/ tests/ infra/coolify/
-	mypy src/ infra/coolify/ --strict --ignore-missing-imports
+	ruff check src/ tests/ infra/coolify/ infra/migrations/
+	mypy src/ infra/coolify/ infra/migrations/ --strict --ignore-missing-imports
 
 format:
-	ruff format src/ tests/ infra/coolify/
-	ruff check --fix src/ tests/ infra/coolify/
+	ruff format src/ tests/ infra/coolify/ infra/migrations/
+	ruff check --fix src/ tests/ infra/coolify/ infra/migrations/
 
 typecheck:
-	mypy src/ infra/coolify/ --strict --ignore-missing-imports
+	mypy src/ infra/coolify/ infra/migrations/ --strict --ignore-missing-imports
 
 precommit:
 	pre-commit run --all-files
+
+migrate:
+	$(PYTHON) -m infra.migrations.run
+
+migrate-dry-run:
+	$(PYTHON) -m infra.migrations.run --dry-run
 
 coolify-plan:
 	$(PYTHON) -m infra.coolify.provision plan

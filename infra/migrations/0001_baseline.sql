@@ -1,16 +1,13 @@
--- YZM536 Air Quality — Hafta 3 STUB schema
--- Owner: database-architect agent
+-- YZM536 Air Quality — Migration 0001: baseline schema
+-- Owner: database-architect agent (H3) → migration runner consumed (H4)
 -- Target: PostgreSQL 16+
 --
--- NOT (H3): Bu dosya minimum stub'tır. csv_loader insert atabilsin ve
--- `make up` healthy çıksın diye sade tutuldu. Hafta 4'te database-architect
--- tekrar gelip aşağıdakileri ekleyecek:
---   * fact_measurements aylık RANGE partitioning (pg_partman)
---   * BRIN(time_id) + B-tree(station_id, time_id DESC) + (pollutant_id) indexleri
---   * dim_time tam takvim boyutu + UNIQUE(station_id, time_id, pollutant_id)
---   * v_hourly_aqi view, v_daily_trends materialized view
---   * data_quality_runs audit tablosu
--- Mevcut tablolar geriye-uyumlu kalacak şekilde genişletilecek.
+-- NOT (H4): Bu dosya Hafta 3 stub şemasının runner-managed eşdeğeri.
+-- İçerik H3'teki `src/storage/schema.sql` ile birebir aynı; tek fark
+-- artık runner (`infra/migrations/run.py`) tarafından `schema_migrations`
+-- tablosuna kaydedilerek uygulanıyor. Hafta 4 boyunca database-architect
+-- bu dosyaya **dokunmaz** — genişletmeler 0002, 0003, 0004 olarak ayrı
+-- migration'larda inşa edilir (backward-compat zinciri).
 
 -- =============================================================================
 -- Dimensions
