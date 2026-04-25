@@ -66,6 +66,8 @@ dev = [
     "detect-secrets>=1.5",
     "types-PyYAML>=6.0",
     "types-python-dateutil>=2.9",
+    "testcontainers[postgres]>=4.0",
+    "psycopg[binary]>=3.2",
 ]
 all = [
     "air-quality-izmir[ingestion,processing,streamlit,ml,coolify,dev]",
@@ -128,6 +130,7 @@ module = [
     "lightgbm.*",
     "plotly.*",
     "apscheduler.*",
+    "testcontainers.*",
 ]
 ignore_missing_imports = true
 
