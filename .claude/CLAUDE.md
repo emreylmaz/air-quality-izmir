@@ -76,6 +76,24 @@ export APP_ENV="local"
 - PR merge sonrası `provision apply --diff-only` çalışır
 - Workflow'larda `echo $TOKEN` yasak — `::add-mask::` kullan
 
+### `httpx` Access Log Policy (TD-07)
+
+`httpx.AsyncClient` default'unda HTTP request/response için INFO-level
+access log emit **etmez** — bu projede güvenli durum. Ancak 3rd-party
+middleware eklenirse (örn. `opentelemetry-httpx`, `httpx-request-id`),
+URL query string'inde `appid=<API_KEY>` sızabilir. Yeni middleware
+eklemeden önce:
+
+1. Middleware'in URL path/query'yi log'layıp log'lamadığını kontrol et.
+2. Log'luyorsa `_mask_url(url)` filter'ını middleware'e enjekte et veya
+   logger seviyesini WARNING'e indir.
+3. `tests/ingestion/test_api_collector.py:test_url_masking_in_logs` benzeri
+   bir contract testi ekle.
+
+`api_collector._request_with_retry` zaten `safe_url = _mask_url(url)` ile
+log'luyor — uygulama tarafında risk yok. Bu policy 3rd-party kütüphane
+güncellemelerinde unutulmasın.
+
 ## Teknik Stack
 - **Runtime:** Python 3.11+, PySpark 3.5.1
 - **Streaming:** Bitnami Kafka 3.7 (KRaft)
@@ -196,43 +214,55 @@ eklenecek (TODO). Şimdilik elle uyulacak.
 
 ## Mevcut Durum (pickup notes)
 
-**Son güncelleme:** 2026-04-25 gece — Sprint 3 yarıda. 7/11 task DONE, kalan 4 task yarın.
+**Son güncelleme:** 2026-04-26 — Sprint 3 kapandı (11/11 ✅), Codex external
+review fix'leri (C1/C2/C3) merge edildi. Sprint 4 hazır, kickoff
+database-architect'e.
 
-### Sprint 3 ilerleme (`docs/sprints/sprint-03.md`)
+### Sprint 3 final durumu (`docs/sprints/sprint-03.md`)
 | # | Task | Durum | Notlar |
 |---|------|-------|--------|
-| T1 | venv `[dev,ingestion]` + pre-commit | ✅ | `processing` extras skip — TD-05 PySpark/Py3.13 |
-| T8 | `.env.local.example` template | ✅ | compose validate PASS |
-| T2 | 6 İzmir istasyonu (Konak/Bornova/Karşıyaka/Alsancak/Bayraklı/**Aliağa**) | ✅ | `config/stations.yaml` + `src/ingestion/stations.py`, 10 test |
-| T7 | `schema.sql` minimal stub (3 tablo + 6 pollutant seed) | ✅ | H4'te database-architect partition+BRIN ekleyecek |
-| T3 | `api_collector.py` async httpx + tenacity retry | ✅ | 20 test, %96.23 coverage, API key masking |
-| T4 | `kafka_producer.py` confluent-kafka wrapper + DLQ | ✅ | 13 test + 1 integration skip, %96.58 coverage |
-| T5 | `main.py` APScheduler entrypoint + graceful shutdown | ✅ | 9 test, **%100 coverage**, Dockerfile.ingestion CMD güncel |
-| **T6** | **`csv_loader.py` tarihsel veri temizleme (cp1254/utf-8-sig, ffill ≤3h, IQR, psycopg execute_batch)** | **⏳ SIRADA** | data-engineer'a ilk handoff |
-| T9 | `make up` smoke test (Kafka + ingestion live data) | ⏳ | devops-engineer, T6'dan sonra |
-| T10 | DQ baseline tests (contracts + key format + row-count invariant) | ⏳ | data-quality-engineer |
-| T11 | Security audit (key leak, .env.local.example check) | ⏳ | security-compliance, son gate |
+| T1 | venv `[dev,ingestion]` + pre-commit | ✅ | TD-05 PySpark/Py3.13 deferred |
+| T2 | 6 İzmir istasyonu config | ✅ | `config/stations.yaml` + 10 test |
+| T3 | `api_collector.py` async httpx + tenacity | ✅ | %96.23 coverage, key masking |
+| T4 | `kafka_producer.py` + DLQ | ✅ | %96.58 coverage |
+| T5 | `main.py` APScheduler + graceful shutdown | ✅ | %100 coverage |
+| T6 | `csv_loader.py` Çevre Bakanlığı CSV | ✅ | ffill/IQR/cp1254, 100-row fixture |
+| T7 | `schema.sql` minimal stub | ✅ | H4'te partition + BRIN ile genişleyecek |
+| T8 | `.env.local.example` | ✅ | compose validate PASS |
+| T9 | `make up` smoke test | ✅ | demo runbook `sprint-03-demo.md` |
+| T10 | DQ baseline | ✅ | 108 test yeşil, %86+ coverage |
+| T11 | Security audit | ✅ PASS | 3 minor finding fix'lendi (`sprint-03-security-audit.md`) |
 
-### Yarın açılış komutu
-**Doğrudan T6 handoff** — yeni `/sprint-start` komutuna gerek yok, sprint-03.md plan hazır:
+**Codex external review fix'leri (post-merge):**
+- C1: `Dockerfile.ingestion` `config/` klasörü COPY + `DEFAULT_STATIONS_PATH` repo-anchored
+- C2: CSV naive timestamp localisation (default `Europe/Istanbul`, `source_timezone` parametresi)
+- C3: `init.sql` CREATE ROLE / ALTER ROLE PASSWORD split (psql `:'var'` DO block içinde suppress)
+
+### Sprint 4 sıradaki — kickoff context
+**Tema:** PostgreSQL star schema (database-architect ana sahibi)
+**Plan:** `docs/sprints/sprint-04.md` (10 task, ~30h, ana risk T3 partition migration)
+
+**İlk handoff komutu:**
 ```
-data-engineer → T6: src/ingestion/csv_loader.py
-- Çevre Bakanlığı CSV (encoding cp1254 veya utf-8-sig), kolonlar kirletici bazlı
-- Temizlik: ffill ≤3h, negatif drop, IQR outlier filter (kirletici başına), µg/m³ standardize
-- psycopg.execute_batch ile fact_measurements insert
-- DoD: tests/ingestion/test_csv_loader.py 100-satır fixture, ≥80% coverage
+database-architect → Sprint 4 kickoff
+- B1 onayı: manuel CREATE TABLE … PARTITION OF (pg_partman yok)
+- B4 onayı: dim_time saatlik (time_id = YYYYMMDDHH)
+- T2 başla: 0002_star_schema_expand.sql (DROP yok, sadece ADD COLUMN/CONSTRAINT)
+- T1 migration runner devops-engineer'da paralel
+- Acceptance: H3 stub'daki 6 dim_pollutant seed satırı korunmalı
 ```
 
-### Son commit'ler (origin'e push'lu, `b9ad111` HEAD)
+### Son commit'ler (origin/main HEAD `9dfcc68`)
 ```
-b9ad111 feat(ingestion): add apscheduler entrypoint with graceful shutdown
-bf0aea8 feat(ingestion): add kafka producer wrapper with dlq routing
-f05bc95 feat(ingestion): add async openweather collector with tenacity retry
-24b6443 feat(db): add minimal schema stub with dim_station, dim_pollutant, fact_measurements
-b547cf9 feat(ingestion): add 6-station izmir catalog with industrial coverage
-cb714b3 docs: log TD-05 pyspark python 3.13 wheel mismatch
-9ba27cc style: apply ruff-format baseline and stub type annotations
-9963c7d feat(infra): expand .env.local.example with full compose env contract
+9dfcc68 fix(infra): split create role from password assignment in postgres init
+0e5e140 fix(ingestion): localise naive csv timestamps to source timezone
+f22978d fix(ingestion): anchor station catalog path to repo root and ship config in image
+32a94e0 docs(sprints): add sprint 3 plan with task breakdown and blocker analysis
+e1151dd docs(sprints): add sprint 3 demo runbook, security audit, and review prompt
+7244557 fix(security): allowlist test fixture secrets in detect-secrets baseline
+6fbedb5 test(ingestion): add cross-cutting dq baseline contracts
+b6de3ac test(ingestion): add csv loader tests with 101-row fixture
+97f3b7e feat(ingestion): add historical csv loader with cleaning pipeline
 ```
 
 ### Tamamlanan (Hafta 1-2 kapsamı)
@@ -240,11 +270,13 @@ cb714b3 docs: log TD-05 pyspark python 3.13 wheel mismatch
 - ✅ Proje iskeleti, secret policy, Coolify IaC, GitHub repo, 5 Coolify kaynağı canlı
 
 ### Açık Hatırlatmalar
-- `main-backup` local branch hâlâ duruyor (Claude trailer'lı eski history) — H8 sonrası sil
-- TD-05: PySpark 3.5.1 + Python 3.13 wheel uyumsuz — H6 spark-engineer karar verecek
-- Coolify app'lerde `DATABASE_URL` Magic Variable referansı; ilk deploy'da `sync_secrets list` ile doğrula
-- Pre-commit hook'ta detect-secrets test fixture'larında `# pragma: allowlist secret` kullan (T3'te yaşandı)
-- `tech-debt.md` → TD-01..TD-05 kayıtlı (Grafana FQDN, main-backup, Spark fixture, commitizen, PySpark wheel)
+- `main-backup` local branch H8 sonrası silinecek (TD-02)
+- TD-05: PySpark/Py3.13 wheel uyumsuzluğu — H6 spark-engineer kararı
+- Coolify app'lerde `DATABASE_URL` Magic Variable referansı; ilk migration apply
+  sonrası `psql` ile `\dt` doğrula (Coolify managed PG'ye `make migrate` deploy
+  hook bağlama TD-candidate, H10)
+- Pre-commit detect-secrets test fixture'larında `# pragma: allowlist secret`
+- `tech-debt.md` → TD-01..TD-13 kayıtlı (TD-09/TD-10/TD-12 H4'te kapanıyor; TD-07 H4 docs patch'inde fix)
 
 ## TODO / Açık Kararlar
 - [ ] OpenWeatherMap Student Pack yanıtı — gelene kadar `respx` mock mode
@@ -259,3 +291,7 @@ cb714b3 docs: log TD-05 pyspark python 3.13 wheel mismatch
 - [ ] **provision.py `fqdn` injection** — `apply_actions` → `ensure_public_app` çağrısı
   `fqdn` parametresini geçirmiyor. config.yaml'daki URL'ler etkisiz kalıyor. `ensure_*`
   imzalarına `fqdn` ekle + payload'a dahil et.
+- [ ] **Sprint 4 (H4) kickoff** — database-architect → migration zinciri
+  (`0002_*` → `0003_*` → `0004_*`), partition + UNIQUE + dim_time +
+  materialized view + audit table. Acceptance: `make migrate && make seed`
+  idempotent, testcontainers integration testi yeşil, 312K satır < 60 sn.
