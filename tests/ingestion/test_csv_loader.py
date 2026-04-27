@@ -21,11 +21,14 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import MagicMock
 
 import pandas as pd
 import pytest
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
 
 from src.ingestion import csv_loader as csv_module
 from src.ingestion.csv_loader import (
@@ -95,7 +98,14 @@ def pollutant_id_map() -> dict[str, int]:
 
 @pytest.fixture
 def mock_conn(pollutant_id_map: dict[str, int]) -> MagicMock:
-    """A `psycopg.Connection` lookalike that serves the seed pollutant map."""
+    """A `psycopg.Connection` lookalike that serves the seed pollutant map.
+
+    `cursor.rowcount` is wired to mirror the size of the last
+    `executemany` call so the new `(inserted, skipped)` tuple from
+    `insert_rows` reflects an "all-inserted, none-skipped" happy path
+    by default. Tests that need the duplicate-skipped path override
+    `rowcount` after invoking the side effect.
+    """
     conn = MagicMock(name="Connection")
     cursor = MagicMock(name="Cursor")
     cursor.__enter__ = MagicMock(return_value=cursor)
@@ -104,7 +114,15 @@ def mock_conn(pollutant_id_map: dict[str, int]) -> MagicMock:
         return_value=[(code, pid) for code, pid in pollutant_id_map.items()]
     )
     cursor.execute = MagicMock()
-    cursor.executemany = MagicMock()
+    cursor.rowcount = 0
+
+    def _executemany(_sql: str, payload: list[tuple[Any, ...]]) -> None:
+        # Simulate a happy-path INSERT … ON CONFLICT DO NOTHING where
+        # every row is a fresh insert; tests can override rowcount
+        # afterwards to model duplicate-skip scenarios.
+        cursor.rowcount = len(payload)
+
+    cursor.executemany = MagicMock(side_effect=_executemany)
     conn.cursor = MagicMock(return_value=cursor)
     conn.commit = MagicMock()
     conn._cursor_for_assert = cursor  # convenience handle
@@ -443,19 +461,42 @@ def test_insert_rows_executes_batch_and_commits(mock_conn: MagicMock) -> None:
         (1, 2, datetime(2024, 1, 1, tzinfo=UTC), 32.0),
         (1, 2, datetime(2024, 1, 1, 1, tzinfo=UTC), 33.5),
     ]
-    n = insert_rows(rows, conn=mock_conn, source="csv")
-    assert n == 2
+    inserted, skipped = insert_rows(rows, conn=mock_conn, source="csv")
+    assert inserted == 2
+    assert skipped == 0
     cur = mock_conn._cursor_for_assert
     cur.executemany.assert_called_once()
     sql_arg, payload = cur.executemany.call_args.args
     assert sql_arg == INSERT_SQL
+    # TD-09: the insert must reference the named UNIQUE constraint so
+    # a downstream rename in 0003 partition swap is caught at boot.
+    assert "ON CONFLICT ON CONSTRAINT fact_measurements_unique_reading" in sql_arg
     assert payload[0] == (1, 2, datetime(2024, 1, 1, tzinfo=UTC), 32.0, "csv")
     mock_conn.commit.assert_called_once()
 
 
+def test_insert_rows_reports_skipped_when_rowcount_below_payload(
+    mock_conn: MagicMock,
+) -> None:
+    """Mock the duplicate-skip path: `cursor.rowcount` < `len(payload)`."""
+    rows = [
+        (1, 2, datetime(2024, 1, 1, tzinfo=UTC), 32.0),
+        (1, 2, datetime(2024, 1, 1, 1, tzinfo=UTC), 33.5),
+        (1, 2, datetime(2024, 1, 1, 2, tzinfo=UTC), 34.1),
+    ]
+    cur = mock_conn._cursor_for_assert
+    # Override the default side effect so rowcount stays at 1 — i.e. only
+    # one of the three rows actually inserted, two were duplicates.
+    cur.executemany.side_effect = lambda *_args, **_kw: setattr(cur, "rowcount", 1)
+    inserted, skipped = insert_rows(rows, conn=mock_conn, source="csv")
+    assert inserted == 1
+    assert skipped == 2
+
+
 def test_insert_rows_short_circuits_on_empty_input(mock_conn: MagicMock) -> None:
-    n = insert_rows([], conn=mock_conn)
-    assert n == 0
+    inserted, skipped = insert_rows([], conn=mock_conn)
+    assert inserted == 0
+    assert skipped == 0
     mock_conn._cursor_for_assert.executemany.assert_not_called()
     mock_conn.commit.assert_not_called()
 
@@ -482,8 +523,9 @@ def test_build_insert_payload_drops_unknown_codes(
 
 
 def test_load_csv_orchestrates_clean_and_insert(mock_conn: MagicMock) -> None:
-    n = load_csv(FIXTURE_PATH, station_id=1, conn=mock_conn)
-    assert n > 0
+    inserted, skipped = load_csv(FIXTURE_PATH, station_id=1, conn=mock_conn)
+    assert inserted > 0
+    assert skipped == 0  # mock simulates all-fresh inserts by default
 
     cur = mock_conn._cursor_for_assert
     cur.executemany.assert_called_once()
@@ -494,7 +536,7 @@ def test_load_csv_orchestrates_clean_and_insert(mock_conn: MagicMock) -> None:
     assert all(t[4] == "csv" for t in payload)
     assert all(isinstance(t[2], datetime) for t in payload)
     # Insert size matches reported count.
-    assert len(payload) == n
+    assert len(payload) == inserted
 
 
 def test_load_csv_returns_zero_when_clean_produces_nothing(
@@ -506,8 +548,9 @@ def test_load_csv_returns_zero_when_clean_produces_nothing(
     csv_path = tmp_path / "tiny.csv"
     csv_path.write_text("Tarih,PM10\n2024-01-01 00:00,-5\n", encoding="utf-8")
 
-    n = load_csv(csv_path, station_id=1, conn=mock_conn)
-    assert n == 0
+    inserted, skipped = load_csv(csv_path, station_id=1, conn=mock_conn)
+    assert inserted == 0
+    assert skipped == 0
     mock_conn._cursor_for_assert.executemany.assert_not_called()
 
 
@@ -524,11 +567,23 @@ def test_load_csv_propagates_unknown_pollutant_warning(
     cur = mock_conn._cursor_for_assert
     cur.fetchall.return_value = [(c, p) for c, p in partial.items()]
 
-    n = load_csv(FIXTURE_PATH, station_id=1, conn=mock_conn)
-    assert n > 0  # other pollutants still inserted
+    inserted, _ = load_csv(FIXTURE_PATH, station_id=1, conn=mock_conn)
+    assert inserted > 0  # other pollutants still inserted
     sql_arg, payload = cur.executemany.call_args.args
     pollutant_ids = {row[1] for row in payload}
     assert pollutant_id_map["pm10"] not in pollutant_ids
+
+
+def test_load_csv_logs_inserted_and_skipped(
+    mock_conn: MagicMock,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The structured log line must surface both counters for ops triage."""
+    with caplog.at_level("INFO", logger="src.ingestion.csv_loader"):
+        load_csv(FIXTURE_PATH, station_id=1, conn=mock_conn)
+    assert any("inserted=" in r.message and "skipped=" in r.message for r in caplog.records), [
+        r.message for r in caplog.records
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -556,12 +611,12 @@ def test_main_invokes_load_csv(
         conn: Any,
         source: str,
         source_timezone: str | None,
-    ) -> int:
+    ) -> tuple[int, int]:
         captured["path"] = path
         captured["station_id"] = station_id
         captured["source"] = source
         captured["source_timezone"] = source_timezone
-        return 7
+        return 7, 0
 
     monkeypatch.setattr(csv_module, "load_csv", fake_load)
 
@@ -570,4 +625,207 @@ def test_main_invokes_load_csv(
     assert rc == 0
     assert captured["station_id"] == 3
     assert captured["source"] == "csv-test"
-    assert "Inserted 7 rows" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "Inserted 7 rows" in err
+    assert "skipped 0" in err
+
+
+def test_main_uses_station_slug_to_resolve_id(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """`--station-slug konak` triggers the dim_station lookup and routes
+    the resolved station_id into `load_csv`.
+    """
+    captured: dict[str, Any] = {}
+
+    fake_conn = MagicMock()
+    fake_conn.__enter__ = MagicMock(return_value=fake_conn)
+    fake_conn.__exit__ = MagicMock(return_value=False)
+    fake_psycopg = MagicMock()
+    fake_psycopg.connect = MagicMock(return_value=fake_conn)
+    monkeypatch.setitem(__import__("sys").modules, "psycopg", fake_psycopg)
+
+    def fake_resolve(_conn: Any, slug: str) -> int:
+        captured["slug"] = slug
+        return 42
+
+    def fake_load(
+        path: Path,
+        station_id: int,
+        *,
+        conn: Any,
+        source: str,
+        source_timezone: str | None,
+    ) -> tuple[int, int]:
+        captured["station_id"] = station_id
+        return 4, 2
+
+    monkeypatch.setattr(csv_module, "resolve_station_id", fake_resolve)
+    monkeypatch.setattr(csv_module, "load_csv", fake_load)
+
+    rc = csv_module.main([str(FIXTURE_PATH), "--station-slug", "konak"])
+
+    assert rc == 0
+    assert captured["slug"] == "konak"
+    assert captured["station_id"] == 42
+    err = capsys.readouterr().err
+    assert "Inserted 4 rows" in err
+    assert "skipped 2" in err
+
+
+def test_main_rejects_both_station_id_and_slug() -> None:
+    """argparse `add_mutually_exclusive_group` enforces XOR — passing both
+    flags must exit non-zero before any work is attempted.
+    """
+    with pytest.raises(SystemExit) as exc_info:
+        csv_module.main([str(FIXTURE_PATH), "--station-id", "1", "--station-slug", "konak"])
+    assert exc_info.value.code != 0
+
+
+def test_main_rejects_missing_station_args() -> None:
+    """The mutex group is `required=True` — neither flag is also a
+    SystemExit, not a silent default.
+    """
+    with pytest.raises(SystemExit) as exc_info:
+        csv_module.main([str(FIXTURE_PATH)])
+    assert exc_info.value.code != 0
+
+
+# ---------------------------------------------------------------------------
+# resolve_station_id (mocked)
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_station_id_returns_match(mock_conn: MagicMock) -> None:
+    """Happy path: `dim_station` returns a row → station_id surfaces."""
+    cur = mock_conn._cursor_for_assert
+    cur.fetchone = MagicMock(return_value=(7,))
+    sid = csv_module.resolve_station_id(mock_conn, "konak")
+    assert sid == 7
+    sql_arg, params = cur.execute.call_args.args
+    # Parameterised — slug is bound, never concatenated.
+    assert "WHERE slug = %s" in sql_arg
+    assert params == ("konak",)
+
+
+def test_resolve_station_id_raises_when_slug_missing(mock_conn: MagicMock) -> None:
+    """Unknown slug → `ValueError` mentioning seed_dim_station."""
+    cur = mock_conn._cursor_for_assert
+    cur.fetchone = MagicMock(return_value=None)
+    with pytest.raises(ValueError, match="seed_dim_station"):
+        csv_module.resolve_station_id(mock_conn, "nonexistent")
+
+
+# ---------------------------------------------------------------------------
+# Integration tests — real PG 16 with full migration chain
+# ---------------------------------------------------------------------------
+#
+# These tests exercise:
+#   * TD-09 idempotency: the same CSV loaded twice → 0 inserted, N skipped on
+#     the second pass.
+#   * TD-10 slug→id lookup: `resolve_station_id` happy path and the
+#     `ValueError` raised when no row matches.
+#
+# The fixture `izmir_sample_utf8.csv` has 101 hourly rows × 6 pollutants;
+# after the cleaning pipeline (negative-drop / IQR / ffill≤3h / NaN drop)
+# the persisted row count varies slightly. We assert on parity between the
+# two runs rather than a hard-coded literal so a future fixture tweak does
+# not require touching the test.
+
+
+@pytest.fixture(scope="module")
+def _monkeypatch_session() -> Iterator[pytest.MonkeyPatch]:
+    mp = pytest.MonkeyPatch()
+    yield mp
+    mp.undo()
+
+
+@pytest.fixture(scope="module")
+def pg_dsn(_monkeypatch_session: pytest.MonkeyPatch) -> Iterator[str]:
+    """PG 16 testcontainer + full migration chain + dim_station seed.
+
+    Module-scoped: one cold-start, one migrate, one seed shared by all
+    tests. Each test uses a unique `(station, timestamp)` axis so no
+    inter-test cleanup is needed.
+    """
+    pytest.importorskip("testcontainers.postgres")
+    _monkeypatch_session.setenv("TESTCONTAINERS_RYUK_DISABLED", "true")
+    from testcontainers.postgres import PostgresContainer
+
+    from infra.migrations.run import run as run_migrations
+    from infra.postgres.seed_dim_station import seed as seed_dim_station
+
+    with PostgresContainer("postgres:16.4-alpine") as pg:
+        url = pg.get_connection_url().replace("postgresql+psycopg2", "postgresql")
+        run_migrations(url)
+        seed_dim_station(url)
+        yield url
+
+
+@pytest.mark.integration
+class TestCsvLoaderIntegration:
+    """Live PG: idempotency UNIQUE constraint + slug lookup contract."""
+
+    def test_idempotent_double_load(self, pg_dsn: str) -> None:
+        """TD-09 fix: same CSV twice → all rows skipped on the second run."""
+        import psycopg
+
+        with psycopg.connect(pg_dsn) as conn:
+            sid = csv_module.resolve_station_id(conn, "konak")
+            first_inserted, first_skipped = load_csv(FIXTURE_PATH, sid, conn=conn)
+            second_inserted, second_skipped = load_csv(FIXTURE_PATH, sid, conn=conn)
+
+        assert first_inserted > 0, "fixture must produce at least one insert"
+        assert first_skipped == 0
+        assert second_inserted == 0
+        assert (
+            second_skipped == first_inserted
+        ), "second run must skip exactly the same number of rows the first run inserted"
+
+    def test_station_slug_lookup_happy_path(self, pg_dsn: str) -> None:
+        """`resolve_station_id` with a real seeded slug routes the insert
+        to the correct station_id.
+        """
+        import psycopg
+
+        with psycopg.connect(pg_dsn) as conn:
+            bornova_id = csv_module.resolve_station_id(conn, "bornova")
+            inserted, _ = load_csv(FIXTURE_PATH, bornova_id, conn=conn)
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT count(*) FROM fact_measurements WHERE station_id = %s",
+                    (bornova_id,),
+                )
+                row = cur.fetchone()
+        assert row is not None
+        assert row[0] == inserted, "all rows should land under the resolved station_id"
+
+    def test_station_slug_not_found_raises(self, pg_dsn: str) -> None:
+        """An unknown slug surfaces `ValueError` before any insert runs."""
+        import psycopg
+
+        with (
+            psycopg.connect(pg_dsn) as conn,
+            pytest.raises(ValueError, match="seed_dim_station"),
+        ):
+            csv_module.resolve_station_id(conn, "no_such_slug")
+
+    def test_resolve_station_id_is_parameterised(self, pg_dsn: str) -> None:
+        """Defence in depth against TD-10 SQL-injection regression: a
+        slug containing SQL syntax must round-trip as a literal lookup
+        miss, not be interpreted as a statement.
+        """
+        import psycopg
+
+        malicious = "konak'; DROP TABLE dim_station; --"
+        with psycopg.connect(pg_dsn) as conn:
+            with pytest.raises(ValueError, match="seed_dim_station"):
+                csv_module.resolve_station_id(conn, malicious)
+            # dim_station must still exist with its 6 rows intact — the
+            # SELECT just returned no rows, the DROP was never executed.
+            with conn.cursor() as cur:
+                cur.execute("SELECT count(*) FROM dim_station")
+                row = cur.fetchone()
+        assert row is not None
+        assert row[0] == 6

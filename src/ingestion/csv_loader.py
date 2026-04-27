@@ -93,11 +93,24 @@ IQR_MULTIPLIER: Final[float] = 1.5
 # fixed at UTC+03 with no DST since 2016, but pytz/zoneinfo carries the full
 # DST history so historical ranges (pre-2016) are converted correctly.
 DEFAULT_SOURCE_TIMEZONE: Final[str] = "Europe/Istanbul"
+
+# TD-09 fix: idempotency UNIQUE constraint named in 0002_star_schema_expand.sql
+# and preserved through the partition swap in 0003_partition_and_indexes.sql.
+# Re-running the loader against the same CSV must be safe — duplicates skip,
+# new rows insert. The constraint name is referenced explicitly so downstream
+# schema authors do not accidentally rename it.
+UNIQUE_CONSTRAINT_NAME: Final[str] = "fact_measurements_unique_reading"
 INSERT_SQL: Final[str] = (
     "INSERT INTO fact_measurements "
     "(station_id, pollutant_id, measured_at, value, source) "
-    "VALUES (%s, %s, %s, %s, %s)"
+    "VALUES (%s, %s, %s, %s, %s) "
+    f"ON CONFLICT ON CONSTRAINT {UNIQUE_CONSTRAINT_NAME} DO NOTHING"
 )
+# TD-10 fix: parameterised slug → station_id lookup. Never string-concat a
+# CLI-supplied slug into the SQL — psycopg's `%s` placeholder handles the
+# single-quote escape correctly even on the regex-validated `Station.id`
+# input. Defence in depth.
+STATION_SLUG_LOOKUP_SQL: Final[str] = "SELECT station_id FROM dim_station WHERE slug = %s"
 
 
 # ---------------------------------------------------------------------------
@@ -352,25 +365,53 @@ def load_pollutant_id_map(conn: psycopg.Connection) -> dict[str, int]:
     return {str(code): int(pid) for code, pid in rows}
 
 
+def resolve_station_id(conn: psycopg.Connection, slug: str) -> int:
+    """Look up `dim_station.station_id` by slug.
+
+    Args:
+        conn: Open psycopg connection.
+        slug: `dim_station.slug` (matches `Station.id` in `config/stations.yaml`).
+
+    Returns:
+        The matching `station_id`.
+
+    Raises:
+        ValueError: when no row matches. The message instructs the operator
+            to run `seed_dim_station` first; this avoids a silent FK error
+            later in `executemany`.
+    """
+    with conn.cursor() as cur:
+        cur.execute(STATION_SLUG_LOOKUP_SQL, (slug,))
+        row = cur.fetchone()
+    if row is None:
+        raise ValueError(f"station slug not found: {slug!r}, run seed_dim_station first")
+    return int(row[0])
+
+
 def insert_rows(
     rows: Sequence[tuple[int, int, datetime, float]],
     *,
     conn: psycopg.Connection,
     source: str = "csv",
-) -> int:
-    """Batch insert prepared `(station_id, pollutant_id, ts, value)` tuples.
+) -> tuple[int, int]:
+    """Batch insert prepared tuples, returning ``(inserted, skipped)``.
 
-    Wraps `cursor.executemany` (the psycopg3 idiomatic batch insert; the
-    legacy `psycopg2.extras.execute_batch` was renamed and is no longer
-    a separate API in psycopg3).
+    Uses `INSERT ... ON CONFLICT ON CONSTRAINT fact_measurements_unique_reading
+    DO NOTHING` (TD-09 idempotency). Re-running the same payload will skip
+    every row. We rely on `cursor.rowcount` after `executemany`: psycopg3
+    aggregates the per-statement affected rows, and `DO NOTHING` excludes
+    conflicting tuples from that count, so ``inserted = rowcount`` exactly.
     """
     if not rows:
-        return 0
+        return 0, 0
     payload = [(s, p, t, v, source) for (s, p, t, v) in rows]
     with conn.cursor() as cur:
         cur.executemany(INSERT_SQL, payload)
+        affected = cur.rowcount
     conn.commit()
-    return len(payload)
+    inserted = max(0, int(affected)) if affected is not None else 0
+    skipped = len(payload) - inserted
+    return inserted, skipped
 
 
 def _build_insert_payload(
@@ -416,12 +457,13 @@ def load_csv(
     column_map: Mapping[str, str] | None = None,
     source: str = "csv",
     source_timezone: str | None = DEFAULT_SOURCE_TIMEZONE,
-) -> int:
-    """Read → clean → insert. Returns number of rows persisted.
+) -> tuple[int, int]:
+    """Read → clean → insert. Returns ``(inserted, skipped)``.
 
     Args:
         path: Filesystem path to the CSV dump.
-        station_id: Foreign key into `dim_station.station_id`.
+        station_id: Foreign key into `dim_station.station_id`. Resolve via
+            :func:`resolve_station_id` when the caller has a slug instead.
         conn: Open psycopg connection. Caller owns lifecycle.
         column_map: Optional override of the header→code mapping.
         source: Value written to `fact_measurements.source` (default
@@ -430,19 +472,31 @@ def load_csv(
         source_timezone: Tz used to localise naive CSV timestamps.
             Default `Europe/Istanbul` matches Çevre Bakanlığı SIM
             exports. Pass `None` if the file already records UTC.
+
+    Returns:
+        Tuple ``(inserted, skipped)`` where ``inserted`` is the number of
+        new rows persisted and ``skipped`` is the number of conflict-on-
+        unique tuples discarded by ``ON CONFLICT DO NOTHING`` (i.e. the
+        idempotency drain when the same CSV is loaded twice).
     """
     df = read_csv(Path(path))
     long = to_long_format(df, column_map=column_map, source_timezone=source_timezone)
     cleaned = clean(long)
     if cleaned.empty:
         _LOG.info("csv had no rows after cleaning: path=%s", path)
-        return 0
+        return 0, 0
 
     pollutant_ids = load_pollutant_id_map(conn)
     rows = _build_insert_payload(cleaned, station_id=station_id, pollutant_ids=pollutant_ids)
-    inserted = insert_rows(rows, conn=conn, source=source)
-    _LOG.info("csv loaded: path=%s station_id=%d rows=%d", path, station_id, inserted)
-    return inserted
+    inserted, skipped = insert_rows(rows, conn=conn, source=source)
+    _LOG.info(
+        "Loaded CSV: inserted=%d, skipped=%d (duplicates) path=%s station_id=%d",
+        inserted,
+        skipped,
+        path,
+        station_id,
+    )
+    return inserted, skipped
 
 
 # ---------------------------------------------------------------------------
@@ -451,12 +505,33 @@ def load_csv(
 
 
 def main(argv: Sequence[str] | None = None) -> int:
-    """`python -m src.ingestion.csv_loader <path> --station-id <int>`."""
+    """CLI: ``python -m src.ingestion.csv_loader <path> --station-{id|slug} ...``.
+
+    `--station-id` and `--station-slug` are mutually exclusive — exactly one
+    must be supplied. Slug mode resolves to `station_id` via
+    :func:`resolve_station_id`; missing slugs raise ``ValueError`` with a
+    pointer to `seed_dim_station`.
+    """
     import psycopg  # local import keeps test imports lightweight
 
     parser = argparse.ArgumentParser(description="Load a historical CSV into PostgreSQL")
     parser.add_argument("path", type=Path, help="Path to CSV file")
-    parser.add_argument("--station-id", type=int, required=True, help="dim_station FK")
+    station_group = parser.add_mutually_exclusive_group(required=True)
+    station_group.add_argument(
+        "--station-id",
+        type=int,
+        default=None,
+        help="dim_station FK (numeric). Mutually exclusive with --station-slug.",
+    )
+    station_group.add_argument(
+        "--station-slug",
+        type=str,
+        default=None,
+        help=(
+            "dim_station.slug (e.g. 'konak'). Resolved to station_id via "
+            "dim_station lookup. Mutually exclusive with --station-id."
+        ),
+    )
     parser.add_argument(
         "--source",
         type=str,
@@ -480,14 +555,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     dsn = settings.database_url.get_secret_value()
     src_tz = args.source_timezone or None
     with psycopg.connect(dsn) as conn:
-        n = load_csv(
+        if args.station_slug is not None:
+            station_id = resolve_station_id(conn, args.station_slug)
+        else:
+            station_id = args.station_id
+        inserted, skipped = load_csv(
             args.path,
-            args.station_id,
+            station_id,
             conn=conn,
             source=args.source,
             source_timezone=src_tz,
         )
-    print(f"Inserted {n} rows", file=sys.stderr)
+    print(f"Inserted {inserted} rows, skipped {skipped} (duplicates)", file=sys.stderr)
     return 0
 
 
@@ -497,6 +576,9 @@ if __name__ == "__main__":
 
 __all__ = [
     "DEFAULT_POLLUTANT_COLUMN_MAP",
+    "INSERT_SQL",
+    "STATION_SLUG_LOOKUP_SQL",
+    "UNIQUE_CONSTRAINT_NAME",
     "clean",
     "drop_negative",
     "forward_fill",
@@ -506,6 +588,7 @@ __all__ = [
     "load_pollutant_id_map",
     "main",
     "read_csv",
+    "resolve_station_id",
     "standardise_units",
     "to_long_format",
 ]
