@@ -54,6 +54,9 @@ derby.log
 # Coolify state cache
 .coolify-cache/
 
+# Test artefact dumps (perf measurement outputs, etc.)
+tests/**/_artefacts/
+
 # Jupyter
 .ipynb_checkpoints/
 *.ipynb
