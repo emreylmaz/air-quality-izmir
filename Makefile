@@ -1,5 +1,5 @@
-.PHONY: help install up down logs ps test lint format typecheck precommit \
-        migrate migrate-dry-run \
+.PHONY: help install up down logs ps test test-integration test-all lint format typecheck precommit \
+        migrate migrate-dry-run migrate-compose seed \
         coolify-plan coolify-apply coolify-status coolify-sync \
         clean build
 
@@ -13,13 +13,17 @@ help:
 	@echo "  down            - Local stack'i durdur (volume korunur)"
 	@echo "  logs            - Servis loglarını takip et"
 	@echo "  ps              - Servis durumunu göster"
-	@echo "  test            - pytest (slow marker hariç)"
+	@echo "  test            - pytest (slow + integration hariç, hızlı unit suite)"
+	@echo "  test-integration- pytest -m integration (testcontainers, Docker gerekir)"
+	@echo "  test-all        - pytest tüm marker'lar (CI full run)"
 	@echo "  lint            - ruff + mypy strict"
 	@echo "  format          - ruff format (kod düzenle)"
 	@echo "  typecheck       - mypy strict"
 	@echo "  precommit       - Tüm pre-commit hook'larını çalıştır"
 	@echo "  migrate         - Pending PostgreSQL migration'larını uygula (idempotent)"
 	@echo "  migrate-dry-run - Pending migration'ları listele, uygulama"
+	@echo "  migrate-compose - One-shot 'aqi-migrate' container ile migrate (compose profile)"
+	@echo "  seed            - dim_station tablosunu config/stations.yaml'dan UPSERT et"
 	@echo "  coolify-plan    - Coolify desired-state diff (dry-run)"
 	@echo "  coolify-apply   - Coolify provisioning (onaylı)"
 	@echo "  coolify-status  - Coolify kaynak sağlık raporu"
@@ -47,7 +51,13 @@ build:
 	$(COMPOSE_LOCAL) build
 
 test:
-	pytest tests/ --cov=src -m "not slow"
+	pytest tests/ --cov=src -m "not slow and not integration"
+
+test-integration:
+	pytest tests/ -m "integration"
+
+test-all:
+	pytest tests/ --cov=src
 
 lint:
 	ruff check src/ tests/ infra/coolify/ infra/migrations/
@@ -64,10 +74,19 @@ precommit:
 	pre-commit run --all-files
 
 migrate:
-	$(PYTHON) -m infra.migrations.run
+	@echo "Applying migrations (DSN from environment / Settings.database_url)..."
+	@$(PYTHON) -m infra.migrations.run
 
 migrate-dry-run:
 	$(PYTHON) -m infra.migrations.run --dry-run
+
+migrate-compose:
+	@echo "Running aqi-migrate one-shot container (compose profile=migrate)..."
+	$(COMPOSE_LOCAL) --profile migrate run --rm aqi-migrate
+
+seed:
+	@echo "Seeding dim_station from config/stations.yaml (idempotent UPSERT)..."
+	@$(PYTHON) -m infra.postgres.seed_dim_station
 
 coolify-plan:
 	$(PYTHON) -m infra.coolify.provision plan

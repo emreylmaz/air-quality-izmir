@@ -1,0 +1,46 @@
+# One-shot migration container — applies pending PG migrations + dim_station seed.
+# Owner: devops-engineer + database-architect
+#
+# Usage:
+#   - Inside compose:  docker compose --profile migrate run --rm aqi-migrate
+#   - Standalone:      docker run --rm --env DATABASE_URL=... aqi-migrate
+#
+# Image içinde hem migration runner (`infra.migrations.run`) hem seed script
+# (`infra.postgres.seed_dim_station`) yer alır. Default CMD migration uygular;
+# seed elle çalıştırılır:
+#
+#   docker compose --profile migrate run --rm aqi-migrate \
+#     python -m infra.postgres.seed_dim_station
+
+# --- Build stage ---
+FROM python:3.11-slim AS builder
+
+WORKDIR /build
+COPY pyproject.toml README.md ./
+COPY src/ ./src/
+COPY infra/ ./infra/
+
+# psycopg[binary] zaten C extension wheel olarak gelir — librdkafka gibi
+# build-essential gerekmez. Yine de pip kendi hızlı upgrade'ini garanti et.
+RUN pip install --no-cache-dir --upgrade pip \
+    && pip install --no-cache-dir ".[dev]"
+
+# --- Runtime stage ---
+FROM python:3.11-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1
+
+RUN useradd --uid 1000 --create-home --shell /bin/bash app
+
+WORKDIR /app
+COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+COPY --chown=app:app src/ ./src/
+COPY --chown=app:app infra/ ./infra/
+COPY --chown=app:app config/ ./config/
+COPY --chown=app:app pyproject.toml README.md ./
+
+USER app
+
+CMD ["python", "-m", "infra.migrations.run"]

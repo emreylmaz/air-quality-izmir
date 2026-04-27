@@ -150,3 +150,22 @@ services:
         condition: service_healthy
     restart: unless-stopped
     networks: [airquality_net]
+
+  # One-shot migration runner. `profiles: [migrate]` opt-in olduğu için
+  # default `make up` start etmez — `make migrate-compose` veya
+  # `docker compose --profile migrate run --rm aqi-migrate` ile elle
+  # tetiklenir. Container exit(0) ile sonlanır.
+  aqi-migrate:
+    build:
+      context: ..
+      dockerfile: infra/Dockerfile.migrate
+    container_name: aqi-migrate
+    profiles:
+      - migrate
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-app}:${POSTGRES_PASSWORD:-local_dev_pw}@postgres:5432/${POSTGRES_DB:-air_quality}
+    command: ["python", "-m", "infra.migrations.run"]
+    networks: [airquality_net]
