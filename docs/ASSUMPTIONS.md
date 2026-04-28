@@ -33,7 +33,7 @@ buradaki her satır ya doğrulanır, ya da düzeltilir.
 | # | Varsayım | Doğrulama yolu | Durum |
 |---|----------|----------------|-------|
 | 1 | Aylık partition yeterli (günlük partition overkill) | Hacim hesabı: 5 station × 6 pollutant × 24h × 30day = 21 600 row/ay | ✅ |
-| 2 | BRIN index time_id üzerinde B-tree'den daha iyi (insert-heavy, sequential) | H4'te EXPLAIN benchmark | ⏳ |
+| 2 | BRIN index `measured_at` üzerinde B-tree'den daha kompakt (insert-heavy, sequential) | H4'te EXPLAIN benchmark | ✅ BRIN 600 KiB vs B-tree composite 7.00 MiB → 1:11.7 oranı (`docs/sprints/sprint-04-perf.md`, 2026-04-27) |
 | 3 | `grafana_ro` role `v_hourly_aqi` view'ine doğrudan erişebiliyor | Role setup sonrası test query | ⏳ |
 
 ## Spark

@@ -214,69 +214,69 @@ eklenecek (TODO). Şimdilik elle uyulacak.
 
 ## Mevcut Durum (pickup notes)
 
-**Son güncelleme:** 2026-04-26 — Sprint 3 kapandı (11/11 ✅), Codex external
-review fix'leri (C1/C2/C3) merge edildi. Sprint 4 hazır, kickoff
-database-architect'e.
+**Son güncelleme:** 2026-04-28 — Sprint 4 kapandı (10/10 ✅), security audit
+PASS sıfır finding, 312K satır perf testi 52.6 sn. H8 ara raporu draft hazır
+(`docs/RAPOR_H8.md`, 718 satır). Sprint 5 kickoff database-architect +
+data-engineer'a (dim_time `is_holiday` seed + indeks tuning).
 
-### Sprint 3 final durumu (`docs/sprints/sprint-03.md`)
+### Sprint 4 final durumu (`docs/sprints/sprint-04.md`)
 | # | Task | Durum | Notlar |
 |---|------|-------|--------|
-| T1 | venv `[dev,ingestion]` + pre-commit | ✅ | TD-05 PySpark/Py3.13 deferred |
-| T2 | 6 İzmir istasyonu config | ✅ | `config/stations.yaml` + 10 test |
-| T3 | `api_collector.py` async httpx + tenacity | ✅ | %96.23 coverage, key masking |
-| T4 | `kafka_producer.py` + DLQ | ✅ | %96.58 coverage |
-| T5 | `main.py` APScheduler + graceful shutdown | ✅ | %100 coverage |
-| T6 | `csv_loader.py` Çevre Bakanlığı CSV | ✅ | ffill/IQR/cp1254, 100-row fixture |
-| T7 | `schema.sql` minimal stub | ✅ | H4'te partition + BRIN ile genişleyecek |
-| T8 | `.env.local.example` | ✅ | compose validate PASS |
-| T9 | `make up` smoke test | ✅ | demo runbook `sprint-03-demo.md` |
-| T10 | DQ baseline | ✅ | 108 test yeşil, %86+ coverage |
-| T11 | Security audit | ✅ PASS | 3 minor finding fix'lendi (`sprint-03-security-audit.md`) |
+| T1 | Migration runner `infra/migrations/run.py` | ✅ | psycopg + checksum, `schema_migrations` audit, %92 coverage |
+| T2 | `0002_star_schema_expand.sql` | ✅ | dim_time + dim_station genişletme + `fact_measurements_unique_reading` |
+| T3 | `0003_partition_and_indexes.sql` | ✅ | 24 monthly + default partition, BRIN + 2× B-tree |
+| T4 | `csv_loader` idempotent + `--station-slug` | ✅ | TD-09 + TD-10 closed, %97 coverage |
+| T5 | `seed_dim_station.py` UPSERT | ✅ | 6 satır, %93 coverage |
+| T6 | `0004_views_and_audit.sql` | ✅ | `v_hourly_aqi` matview + `v_daily_trends` + `data_quality_runs` |
+| T7 | testcontainers integration suite | ✅ | end-to-end migration + seed + load + idempotency |
+| T8 | 312K satır perf smoke test | ✅ | 52.6 sn / 5916 rows/sec, BRIN:B-tree 1:11.7 |
+| T9 | Makefile `make migrate`/`make seed` + test filter | ✅ | TD-12 closed |
+| T10 | Docs patch + security audit | ✅ PASS | MIMARI star schema güncel, sıfır kritik bulgu |
 
-**Codex external review fix'leri (post-merge):**
-- C1: `Dockerfile.ingestion` `config/` klasörü COPY + `DEFAULT_STATIONS_PATH` repo-anchored
-- C2: CSV naive timestamp localisation (default `Europe/Istanbul`, `source_timezone` parametresi)
-- C3: `init.sql` CREATE ROLE / ALTER ROLE PASSWORD split (psql `:'var'` DO block içinde suppress)
+**Sprint 4 closeout artefaktları:**
+- `docs/sprints/sprint-04-perf.md` — partition pruning EXPLAIN, BRIN/B-tree size benchmark
+- `docs/sprints/sprint-04-security-audit.md` — credential leak + GRANT audit, PASS
+- `docs/RAPOR_H8.md` — H8 ara rapor draft (öğrenci no + ekran görüntüleri teslim öncesi)
 
-### Sprint 4 sıradaki — kickoff context
-**Tema:** PostgreSQL star schema (database-architect ana sahibi)
-**Plan:** `docs/sprints/sprint-04.md` (10 task, ~30h, ana risk T3 partition migration)
+### Sprint 5 sıradaki — kickoff context
+**Tema:** Boyut tabloları ince ayarı + indeks tuning (database-architect ana sahibi)
+**Plan:** `docs/sprints/sprint-05.md` (yazılacak — `/sprint-start 5`)
 
-**İlk handoff komutu:**
+**İlk handoff hatları:**
 ```
-database-architect → Sprint 4 kickoff
-- B1 onayı: manuel CREATE TABLE … PARTITION OF (pg_partman yok)
-- B4 onayı: dim_time saatlik (time_id = YYYYMMDDHH)
-- T2 başla: 0002_star_schema_expand.sql (DROP yok, sadece ADD COLUMN/CONSTRAINT)
-- T1 migration runner devops-engineer'da paralel
-- Acceptance: H3 stub'daki 6 dim_pollutant seed satırı korunmalı
+database-architect + data-engineer → Sprint 5 kickoff
+- dim_time.is_holiday seed (TR resmi tatil API'si veya statik liste)
+- random_page_cost / effective_cache_size tune (Coolify managed PG default'ları)
+- v_hourly_aqi CONCURRENTLY refresh stratejisi (H7 streaming trigger için yer)
+- spark-engineer paralelde TD-05 PySpark/Py3.13 kararı (H6 kickoff)
 ```
 
-### Son commit'ler (origin/main HEAD `9dfcc68`)
+### Son commit'ler (origin/main HEAD `26088f1`)
 ```
-9dfcc68 fix(infra): split create role from password assignment in postgres init
-0e5e140 fix(ingestion): localise naive csv timestamps to source timezone
-f22978d fix(ingestion): anchor station catalog path to repo root and ship config in image
-32a94e0 docs(sprints): add sprint 3 plan with task breakdown and blocker analysis
-e1151dd docs(sprints): add sprint 3 demo runbook, security audit, and review prompt
-7244557 fix(security): allowlist test fixture secrets in detect-secrets baseline
-6fbedb5 test(ingestion): add cross-cutting dq baseline contracts
-b6de3ac test(ingestion): add csv loader tests with 101-row fixture
-97f3b7e feat(ingestion): add historical csv loader with cleaning pipeline
+26088f1 docs(security): add sprint 4 security audit report
+24771a3 docs: update mimari with star schema partition layout and sprint 4 closeout
+6b82b78 test(integration): add 312k row load performance smoke test
+d36c511 chore(infra): add migrate seed make targets and pytest integration filter
+9430047 test(integration): add end-to-end schema and ingestion smoke test
+684b4ab feat(db): add hourly aqi materialized view, daily trends, and dq audit table
+13d0bbb feat(ingestion): add idempotent csv loader with station slug lookup
+75dfb33 feat(db): add dim_station seed script reading stations yaml
+bbd786a feat(db): partition fact_measurements by month with brin and btree indexes
+c685013 test(db): add 0002 migration integration tests for dim_time and unique constraint
 ```
 
-### Tamamlanan (Hafta 1-2 kapsamı)
-- ✅ 11 subagent + 8 slash komut + `.claude/settings.local.json`
-- ✅ Proje iskeleti, secret policy, Coolify IaC, GitHub repo, 5 Coolify kaynağı canlı
+### Tamamlanan (Sprint 1-4 kapsamı)
+- ✅ Sprint 1-2: 11 subagent, 5 Coolify kaynağı canlı, secret policy + IaC
+- ✅ Sprint 3: API collector + Kafka producer + CSV loader, 11/11 task, Codex C1/C2/C3 fix
+- ✅ Sprint 4: Star schema (4 migration), partition + indeks, idempotency, 312K perf, security PASS
 
 ### Açık Hatırlatmalar
-- `main-backup` local branch H8 sonrası silinecek (TD-02)
+- `main-backup` local branch H8 teslim sonrası silinecek (TD-02)
 - TD-05: PySpark/Py3.13 wheel uyumsuzluğu — H6 spark-engineer kararı
-- Coolify app'lerde `DATABASE_URL` Magic Variable referansı; ilk migration apply
-  sonrası `psql` ile `\dt` doğrula (Coolify managed PG'ye `make migrate` deploy
-  hook bağlama TD-candidate, H10)
+- TD-15: Coolify managed PG'ye `make migrate` deploy hook (H10) — şimdilik manuel `psql` apply
 - Pre-commit detect-secrets test fixture'larında `# pragma: allowlist secret`
-- `tech-debt.md` → TD-01..TD-13 kayıtlı (TD-09/TD-10/TD-12 H4'te kapanıyor; TD-07 H4 docs patch'inde fix)
+- `tech-debt.md` → TD-01..TD-15 kayıtlı; TD-07/09/10/12 H4'te kapatıldı (Kapatılanlar tablosunda commit hash'leriyle)
+- `docs/RAPOR_H8.md` H8 teslim öncesi: öğrenci no + watermark'lı ekran görüntüleri + 12 dk demo video bağlantısı
 
 ## TODO / Açık Kararlar
 - [ ] OpenWeatherMap Student Pack yanıtı — gelene kadar `respx` mock mode
@@ -291,7 +291,10 @@ b6de3ac test(ingestion): add csv loader tests with 101-row fixture
 - [ ] **provision.py `fqdn` injection** — `apply_actions` → `ensure_public_app` çağrısı
   `fqdn` parametresini geçirmiyor. config.yaml'daki URL'ler etkisiz kalıyor. `ensure_*`
   imzalarına `fqdn` ekle + payload'a dahil et.
-- [ ] **Sprint 4 (H4) kickoff** — database-architect → migration zinciri
-  (`0002_*` → `0003_*` → `0004_*`), partition + UNIQUE + dim_time +
-  materialized view + audit table. Acceptance: `make migrate && make seed`
-  idempotent, testcontainers integration testi yeşil, 312K satır < 60 sn.
+- [x] ~~**Sprint 4 (H4) kickoff** — migration zinciri 0001-0004, partition +
+  UNIQUE + dim_time + materialized view + audit table~~ ✅ kapandı
+  (HEAD `26088f1`, 10/10 task, 312K perf 52.6 sn, security audit PASS)
+- [ ] **Sprint 5 (H5) kickoff** — `/sprint-start 5`: dim_time `is_holiday`
+  seed (TR resmi tatil), `random_page_cost` tune, matview refresh stratejisi.
+- [ ] **H8 final teslim öncesi** — `docs/RAPOR_H8.md`'ye öğrenci no, watermark'lı
+  ekran görüntüleri (`docs/images/h8/`), 12 dakikalık demo video bağlantısı eklensin.
