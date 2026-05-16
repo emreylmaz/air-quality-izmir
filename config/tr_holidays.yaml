@@ -1,0 +1,138 @@
+# YZM536 Air Quality — TR resmi + dini tatil veri seti (2024-2025)
+#
+# Amaç: dim_time.is_holiday seed'i için statik tatil listesi
+#   (sprint-05 B1 kararı — runtime API çağrısı yok, secret yüzeyi sıfır).
+#   `infra/postgres/seed_dim_time.py` bu dosyayı pydantic `HolidayEntry`
+#   modeliyle parse eder; eşleşen tarihin 24 saatlik satırı is_holiday=true.
+#
+# Kapsam: yalnız tam gün tatiller. Yarım gün arifeler (28 Ekim öğleden
+#   sonra, dini bayram arife günleri) NOT olarak işaretli ama is_holiday
+#   amacıyla tam gün kabul edilir — saatlik granülerite tam gün bayrak
+#   tutar (hava kalitesi trafik/ısınma analizi için arife günü de düşük
+#   aktivite gösterir; yarım gün ayrımı dim_time şemasında kolon yok).
+#
+# KAYNAKLAR:
+#   - Resmi (official) tatiller: 2429 sayılı "Ulusal Bayram ve Genel
+#     Tatiller Hakkında Kanun" — sabit tarihli, her yıl değişmez.
+#   - Dini (religious) bayramlar: Diyanet İşleri Başkanlığı resmi
+#     "Dini Günler / Dini Bayramlar" takvimi (diyanet.gov.tr). Ramazan ve
+#     Kurban bayramı arife + bayram günleri hicri takvime göre belirlenir;
+#     2024-2025 tarihleri Diyanet'in ilan ettiği takvimden alınmıştır.
+#
+# date: YYYY-MM-DD · name: tatil adı (TR) · type: official | religious
+
+holidays:
+  # ===== 2024 — Resmi tatiller =====
+  - date: "2024-01-01"
+    name: "Yılbaşı"
+    type: official
+  - date: "2024-04-23"
+    name: "Ulusal Egemenlik ve Çocuk Bayramı"
+    type: official
+  - date: "2024-05-01"
+    name: "Emek ve Dayanışma Günü"
+    type: official
+  - date: "2024-05-19"
+    name: "Atatürk'ü Anma Gençlik ve Spor Bayramı"
+    type: official
+  - date: "2024-07-15"
+    name: "Demokrasi ve Millî Birlik Günü"
+    type: official
+  - date: "2024-08-30"
+    name: "Zafer Bayramı"
+    type: official
+  # 28 Ekim resmi olarak yarım gün (öğleden sonra) — tam gün bayrak için dahil.
+  - date: "2024-10-28"
+    name: "Cumhuriyet Bayramı Arifesi (yarım gün)"
+    type: official
+  - date: "2024-10-29"
+    name: "Cumhuriyet Bayramı"
+    type: official
+
+  # ===== 2024 — Dini bayramlar (Diyanet takvimi) =====
+  # Ramazan Bayramı 2024: arife 9 Nisan (yarım gün), bayram 10-12 Nisan.
+  - date: "2024-04-09"
+    name: "Ramazan Bayramı Arifesi (yarım gün)"
+    type: religious
+  - date: "2024-04-10"
+    name: "Ramazan Bayramı 1. Gün"
+    type: religious
+  - date: "2024-04-11"
+    name: "Ramazan Bayramı 2. Gün"
+    type: religious
+  - date: "2024-04-12"
+    name: "Ramazan Bayramı 3. Gün"
+    type: religious
+  # Kurban Bayramı 2024: arife 15 Haziran (yarım gün), bayram 16-19 Haziran.
+  - date: "2024-06-15"
+    name: "Kurban Bayramı Arifesi (yarım gün)"
+    type: religious
+  - date: "2024-06-16"
+    name: "Kurban Bayramı 1. Gün"
+    type: religious
+  - date: "2024-06-17"
+    name: "Kurban Bayramı 2. Gün"
+    type: religious
+  - date: "2024-06-18"
+    name: "Kurban Bayramı 3. Gün"
+    type: religious
+  - date: "2024-06-19"
+    name: "Kurban Bayramı 4. Gün"
+    type: religious
+
+  # ===== 2025 — Resmi tatiller =====
+  - date: "2025-01-01"
+    name: "Yılbaşı"
+    type: official
+  - date: "2025-04-23"
+    name: "Ulusal Egemenlik ve Çocuk Bayramı"
+    type: official
+  - date: "2025-05-01"
+    name: "Emek ve Dayanışma Günü"
+    type: official
+  - date: "2025-05-19"
+    name: "Atatürk'ü Anma Gençlik ve Spor Bayramı"
+    type: official
+  - date: "2025-07-15"
+    name: "Demokrasi ve Millî Birlik Günü"
+    type: official
+  - date: "2025-08-30"
+    name: "Zafer Bayramı"
+    type: official
+  - date: "2025-10-28"
+    name: "Cumhuriyet Bayramı Arifesi (yarım gün)"
+    type: official
+  - date: "2025-10-29"
+    name: "Cumhuriyet Bayramı"
+    type: official
+
+  # ===== 2025 — Dini bayramlar (Diyanet takvimi) =====
+  # Ramazan Bayramı 2025: arife 29 Mart (yarım gün), bayram 30-31 Mart, 1 Nisan.
+  - date: "2025-03-29"
+    name: "Ramazan Bayramı Arifesi (yarım gün)"
+    type: religious
+  - date: "2025-03-30"
+    name: "Ramazan Bayramı 1. Gün"
+    type: religious
+  - date: "2025-03-31"
+    name: "Ramazan Bayramı 2. Gün"
+    type: religious
+  - date: "2025-04-01"
+    name: "Ramazan Bayramı 3. Gün"
+    type: religious
+  # Kurban Bayramı 2025: arife 5 Haziran (yarım gün), bayram 6-9 Haziran.
+  - date: "2025-06-05"
+    name: "Kurban Bayramı Arifesi (yarım gün)"
+    type: religious
+  - date: "2025-06-06"
+    name: "Kurban Bayramı 1. Gün"
+    type: religious
+  - date: "2025-06-07"
+    name: "Kurban Bayramı 2. Gün"
+    type: religious
+  - date: "2025-06-08"
+    name: "Kurban Bayramı 3. Gün"
+    type: religious
+  - date: "2025-06-09"
+    name: "Kurban Bayramı 4. Gün"
+    type: religious
