@@ -71,3 +71,8 @@ backups/
 # OS
 Thumbs.db
 desktop.ini
+
+# Node — devcontainer/Codespaces Claude Code CLI yan etkisi; bu repo'da npm yok
+package.json
+package-lock.json
+node_modules/

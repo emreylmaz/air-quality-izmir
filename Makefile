@@ -1,5 +1,5 @@
 .PHONY: help install up down logs ps test test-integration test-all lint format typecheck precommit \
-        migrate migrate-dry-run migrate-compose seed \
+        migrate migrate-dry-run migrate-compose seed seed-time \
         coolify-plan coolify-apply coolify-status coolify-sync \
         clean build
 
@@ -24,6 +24,7 @@ help:
 	@echo "  migrate-dry-run - Pending migration'ları listele, uygulama"
 	@echo "  migrate-compose - One-shot 'aqi-migrate' container ile migrate (compose profile)"
 	@echo "  seed            - dim_station tablosunu config/stations.yaml'dan UPSERT et"
+	@echo "  seed-time       - dim_time tablosunu config/tr_holidays.yaml'dan UPSERT et (saatlik)"
 	@echo "  coolify-plan    - Coolify desired-state diff (dry-run)"
 	@echo "  coolify-apply   - Coolify provisioning (onaylı)"
 	@echo "  coolify-status  - Coolify kaynak sağlık raporu"
@@ -60,15 +61,15 @@ test-all:
 	pytest tests/ --cov=src
 
 lint:
-	ruff check src/ tests/ infra/coolify/ infra/migrations/
-	mypy src/ infra/coolify/ infra/migrations/ --strict --ignore-missing-imports
+	ruff check src/ tests/ infra/coolify/ infra/migrations/ infra/postgres/
+	mypy src/ infra/coolify/ infra/migrations/ infra/postgres/ --strict --ignore-missing-imports
 
 format:
-	ruff format src/ tests/ infra/coolify/ infra/migrations/
-	ruff check --fix src/ tests/ infra/coolify/ infra/migrations/
+	ruff format src/ tests/ infra/coolify/ infra/migrations/ infra/postgres/
+	ruff check --fix src/ tests/ infra/coolify/ infra/migrations/ infra/postgres/
 
 typecheck:
-	mypy src/ infra/coolify/ infra/migrations/ --strict --ignore-missing-imports
+	mypy src/ infra/coolify/ infra/migrations/ infra/postgres/ --strict --ignore-missing-imports
 
 precommit:
 	pre-commit run --all-files
@@ -87,6 +88,10 @@ migrate-compose:
 seed:
 	@echo "Seeding dim_station from config/stations.yaml (idempotent UPSERT)..."
 	@$(PYTHON) -m infra.postgres.seed_dim_station
+
+seed-time:
+	@echo "Seeding dim_time hourly rows from config/tr_holidays.yaml (idempotent UPSERT)..."
+	@$(PYTHON) -m infra.postgres.seed_dim_time
 
 coolify-plan:
 	$(PYTHON) -m infra.coolify.provision plan
