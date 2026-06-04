@@ -37,6 +37,7 @@ from __future__ import annotations
 import argparse
 import logging
 import sys
+from datetime import date
 from typing import TYPE_CHECKING, Final
 
 if TYPE_CHECKING:
@@ -73,20 +74,30 @@ def _build_spark_session(app_name: str = "aqi-batch") -> SparkSession:
 
 
 def _read_fact_measurements(
-    spark: SparkSession, jdbc_url: str, date_from: str, date_to: str
+    spark: SparkSession, jdbc_url: str, date_from: date, date_to: date
 ) -> DataFrame:
     """Read fact_measurements partition for [date_from, date_to).
 
     Partition pruning is delegated to PostgreSQL — we pass a server-side
     `dbtable` subquery with the WHERE filter so the driver loads only
     the rows in the date range, not the full table.
+
+    Security note (SQL injection guard): `date_from` and `date_to` are
+    typed `datetime.date`. The caller (`main`) parses CLI strings with
+    `date.fromisoformat`, which rejects anything outside `YYYY-MM-DD`;
+    `.isoformat()` then re-emits exactly that grammar. Spark JDBC
+    `dbtable` is a free-form SQL subquery (no parameter binding
+    surface), so this validate-then-canonicalise pattern is the
+    correct mitigation rather than a parameter placeholder.
     """
+    iso_from = date_from.isoformat()
+    iso_to = date_to.isoformat()
     query = f"""
         (SELECT measurement_id, station_id, pollutant_id, measured_at,
                 value, source
          FROM fact_measurements
-         WHERE measured_at >= '{date_from}'::timestamptz
-           AND measured_at <  '{date_to}'::timestamptz) AS fm
+         WHERE measured_at >= '{iso_from}'::timestamptz
+           AND measured_at <  '{iso_to}'::timestamptz) AS fm
     """
     return (
         spark.read.format("jdbc")
@@ -279,8 +290,13 @@ def _write_jdbc(df: DataFrame, jdbc_url: str, table: str, mode: str = "append") 
     )
 
 
-def run_batch(jdbc_url: str, date_from: str, date_to: str) -> None:
+def run_batch(jdbc_url: str, date_from: date, date_to: date) -> None:
     """Orchestrate the full Sprint 6 batch pipeline.
+
+    Args:
+        jdbc_url: PostgreSQL JDBC connection URL.
+        date_from: Inclusive lower bound of measurement range.
+        date_to: Exclusive upper bound of measurement range.
 
     Stages:
         1. Read fact_measurements + dim_pollutant via JDBC.
@@ -290,7 +306,8 @@ def run_batch(jdbc_url: str, date_from: str, date_to: str) -> None:
         5. Compute station correlation matrix → write to
            agg_station_correlation.
     """
-    spark = _build_spark_session(app_name=f"aqi-batch-{date_from}-{date_to}")
+    app_suffix = f"{date_from.isoformat()}-{date_to.isoformat()}"
+    spark = _build_spark_session(app_name=f"aqi-batch-{app_suffix}")
     try:
         _LOG.info("reading fact_measurements [%s, %s)", date_from, date_to)
         measurements = _read_fact_measurements(spark, jdbc_url, date_from, date_to)
@@ -317,12 +334,30 @@ def run_batch(jdbc_url: str, date_from: str, date_to: str) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
-    """`spark-submit src/processing/spark_batch.py --date-from ... --date-to ...`."""
+    """`spark-submit src/processing/spark_batch.py --date-from ... --date-to ...`.
+
+    `--date-from` / `--date-to` parsed via `date.fromisoformat` which
+    rejects anything outside the `YYYY-MM-DD` grammar with a
+    `ValueError`. argparse then surfaces the error message to the
+    operator before any SQL is constructed downstream. This is the
+    validate-at-boundary mitigation for the SQL-injection surface in
+    `_read_fact_measurements`'s `dbtable` subquery.
+    """
     parser = argparse.ArgumentParser(
         description="Sprint 6 Spark batch: AQI hourly + daily + rolling + correlation",
     )
-    parser.add_argument("--date-from", required=True, help="ISO date inclusive lower bound")
-    parser.add_argument("--date-to", required=True, help="ISO date exclusive upper bound")
+    parser.add_argument(
+        "--date-from",
+        required=True,
+        type=date.fromisoformat,
+        help="ISO date (YYYY-MM-DD) inclusive lower bound",
+    )
+    parser.add_argument(
+        "--date-to",
+        required=True,
+        type=date.fromisoformat,
+        help="ISO date (YYYY-MM-DD) exclusive upper bound",
+    )
     parser.add_argument(
         "--jdbc-url",
         default=None,
