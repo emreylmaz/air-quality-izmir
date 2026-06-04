@@ -1,0 +1,143 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "İzmir 6 istasyon AQI overview — gauge + zaman serisi + kategori dağılımı. Sprint 13 deliverable.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "air-quality-db"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "#00E400", "value": null},
+              {"color": "#FFFF00", "value": 51},
+              {"color": "#FF7E00", "value": 101},
+              {"color": "#FF0000", "value": 151},
+              {"color": "#8F3F97", "value": 201},
+              {"color": "#7E0023", "value": 301}
+            ]
+          },
+          "unit": "none",
+          "min": 0,
+          "max": 500
+        }
+      },
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "id": 1,
+      "options": {
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": ["lastNotNull"],
+          "fields": "",
+          "values": false
+        },
+        "showThresholdLabels": true,
+        "showThresholdMarkers": true
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "air-quality-db"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT ds.name AS metric, avg(va.aqi) AS value FROM v_hourly_aqi va JOIN dim_station ds ON ds.station_id = va.station_id WHERE va.measured_at >= now() - interval '1 hour' GROUP BY ds.name ORDER BY value DESC",
+          "refId": "A"
+        }
+      ],
+      "title": "Anlık AQI Gauge — Son 1 Saat Ortalaması (6 İstasyon)",
+      "type": "gauge"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "air-quality-db"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "axisCenteredZero": false,
+            "axisColorMode": "text",
+            "axisLabel": "AQI",
+            "axisPlacement": "auto",
+            "barAlignment": 0,
+            "drawStyle": "line",
+            "fillOpacity": 10,
+            "gradientMode": "none",
+            "lineInterpolation": "smooth",
+            "lineWidth": 2,
+            "pointSize": 4,
+            "scaleDistribution": {"type": "linear"},
+            "showPoints": "never",
+            "spanNulls": true,
+            "stacking": {"group": "A", "mode": "none"},
+            "thresholdsStyle": {"mode": "off"}
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{"color": "green", "value": null}]
+          },
+          "unit": "none"
+        }
+      },
+      "gridPos": {"h": 9, "w": 24, "x": 0, "y": 8},
+      "id": 2,
+      "options": {
+        "legend": {
+          "calcs": ["mean", "max"],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "air-quality-db"
+          },
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT va.measured_at AS time, ds.name AS metric, va.aqi AS value FROM v_hourly_aqi va JOIN dim_station ds ON ds.station_id = va.station_id WHERE $__timeFilter(va.measured_at) ORDER BY va.measured_at",
+          "refId": "A"
+        }
+      ],
+      "title": "Saatlik AQI Zaman Serisi — Her İstasyon Ayrı Eğri",
+      "type": "timeseries"
+    }
+  ],
+  "refresh": "5m",
+  "schemaVersion": 39,
+  "tags": ["air-quality", "izmir", "sprint-13"],
+  "templating": {"list": []},
+  "time": {"from": "now-24h", "to": "now"},
+  "timepicker": {},
+  "timezone": "Europe/Istanbul",
+  "title": "İzmir AQ — AQI Overview",
+  "uid": "izmir-aqi-overview",
+  "version": 1,
+  "weekStart": ""
+}

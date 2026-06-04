@@ -1,0 +1,169 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "description": "İstasyon ve kirletici karşılaştırma — günlük min/max/avg + plausibility band uyarıları. Sprint 13 deliverable.",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 0,
+  "id": null,
+  "links": [],
+  "liveNow": false,
+  "panels": [
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "air-quality-db"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "axisLabel": "Konsantrasyon (µg/m³)",
+            "drawStyle": "bars",
+            "fillOpacity": 70,
+            "lineWidth": 1,
+            "stacking": {"group": "A", "mode": "none"}
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [{"color": "green", "value": null}]
+          },
+          "unit": "none"
+        }
+      },
+      "gridPos": {"h": 9, "w": 12, "x": 0, "y": 0},
+      "id": 1,
+      "options": {
+        "legend": {
+          "calcs": ["mean"],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {"mode": "multi", "sort": "desc"}
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "air-quality-db"
+          },
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT date_trunc('day', fm.measured_at) AS time, ds.name AS metric, avg(fm.value) AS value FROM fact_measurements fm JOIN dim_station ds ON ds.station_id = fm.station_id JOIN dim_pollutant dp ON dp.pollutant_id = fm.pollutant_id WHERE $__timeFilter(fm.measured_at) AND dp.code = 'pm25' GROUP BY 1, ds.name ORDER BY 1",
+          "refId": "A"
+        }
+      ],
+      "title": "Günlük PM₂.₅ Ortalaması — İstasyon Karşılaştırma",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "air-quality-db"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "palette-classic"},
+          "custom": {
+            "drawStyle": "line",
+            "fillOpacity": 5,
+            "lineInterpolation": "smooth",
+            "lineWidth": 2
+          },
+          "mappings": [],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {"color": "green", "value": null},
+              {"color": "yellow", "value": 50},
+              {"color": "red", "value": 100}
+            ]
+          },
+          "unit": "none"
+        }
+      },
+      "gridPos": {"h": 9, "w": 12, "x": 12, "y": 0},
+      "id": 2,
+      "options": {
+        "legend": {
+          "calcs": ["last", "mean"],
+          "displayMode": "table",
+          "placement": "right",
+          "showLegend": true
+        },
+        "tooltip": {"mode": "multi"}
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "air-quality-db"
+          },
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT fm.measured_at AS time, dp.code AS metric, avg(fm.value) AS value FROM fact_measurements fm JOIN dim_pollutant dp ON dp.pollutant_id = fm.pollutant_id WHERE $__timeFilter(fm.measured_at) GROUP BY fm.measured_at, dp.code ORDER BY fm.measured_at",
+          "refId": "A"
+        }
+      ],
+      "title": "Kirletici Zaman Serisi — Tüm İstasyon Ortalaması",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "postgres",
+        "uid": "air-quality-db"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {"mode": "thresholds"},
+          "custom": {"align": "center", "filterable": false},
+          "mappings": [
+            {"options": {"pass": {"color": "green", "text": "✓ PASS"}}, "type": "value"},
+            {"options": {"warn": {"color": "yellow", "text": "⚠ WARN"}}, "type": "value"},
+            {"options": {"fail": {"color": "red", "text": "✗ FAIL"}}, "type": "value"}
+          ],
+          "thresholds": {"mode": "absolute", "steps": [{"color": "green", "value": null}]},
+          "unit": "string"
+        }
+      },
+      "gridPos": {"h": 6, "w": 24, "x": 0, "y": 9},
+      "id": 3,
+      "options": {
+        "footer": {"countRows": false, "fields": "", "reducer": ["sum"], "show": false},
+        "showHeader": true,
+        "sortBy": [{"desc": true, "displayName": "run_at"}]
+      },
+      "pluginVersion": "11.0.0",
+      "targets": [
+        {
+          "datasource": {
+            "type": "postgres",
+            "uid": "air-quality-db"
+          },
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT run_at, suite_name, passed, failed, (payload->>'overall_status') AS status FROM data_quality_runs ORDER BY run_at DESC LIMIT 20",
+          "refId": "A"
+        }
+      ],
+      "title": "Son 20 Veri Kalitesi Denetimi (Sprint 12 DQ Framework)",
+      "type": "table"
+    }
+  ],
+  "refresh": "5m",
+  "schemaVersion": 39,
+  "tags": ["air-quality", "izmir", "sprint-13", "data-quality"],
+  "templating": {"list": []},
+  "time": {"from": "now-7d", "to": "now"},
+  "timepicker": {},
+  "timezone": "Europe/Istanbul",
+  "title": "İzmir AQ — Station + Pollutant Comparison",
+  "uid": "izmir-aqi-station-comparison",
+  "version": 1,
+  "weekStart": ""
+}
