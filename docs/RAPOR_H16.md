@@ -284,45 +284,156 @@ Görselleştirme katmanı iki farklı kullanıcı persona'sına hizmet vermekted
 
 ## Bölüm 4: Sonuç
 
-_(Bu bölüm Sprint 6-14 deliverable'ları tamamlandıktan sonra ölçülen metric'lerle doldurulacaktır. Şu anda şablon olarak duruyor — yazım sırası: Sprint kod çıktıları yazıldıktan sonra.)_
-
 ### 4A. Çalışmanın Sonuçları
 
-_(TODO — Sprint 6-14 deliverable'ları + final metric'ler)_
+Proje 11 sprint (Hafta 1–15) boyunca beş katmanlı bir veri boru hattını uçtan uca implement etmiştir. Aşağıdaki başlıklar her sprintin somut çıktısını ve teslim eden modülleri özetler.
+
+**Hafta 1–4 — Ingestion ve depolama altyapısı (H8 raporunda detaylandırılmıştır):**
+
+- Coolify üzerinde 5 managed kaynak provision edilmiştir (PostgreSQL 16, Grafana, Streamlit, ingestion uygulaması, opsiyonel Kafka servisi).
+- OpenWeatherMap REST API'sinden saatlik canlı veri çekimi için `api_collector.py` + `kafka_producer.py` + APScheduler entrypoint.
+- T.C. Çevre Bakanlığı SİM portalı CSV dosyaları için cp1254 fallback + Europe/Istanbul TZ normalize + `ON CONFLICT DO NOTHING` idempotent yükleyici (`csv_loader.py`).
+- 4 migration (0001–0004) ile yıldız şeması + 24 monthly RANGE partition + BRIN + 2× B-tree + `v_hourly_aqi` matview + `data_quality_runs` audit tablosu.
+
+**Hafta 5 — Boyut tabloları ince ayar ve planner tuning:**
+
+- `dim_time` saatlik UPSERT seed: 2024-01-01 ile 2025-12-31 arası **17.544 satır**, `is_holiday` flagi TR resmi tatil + Diyanet bayram katalogundan beslenir (`config/tr_holidays.yaml`).
+- `0005_planner_tuning.sql` migration'ı: `random_page_cost = 1.1` + `effective_cache_size = '2GB'`, `ALTER DATABASE … SET` ile `pg_db_role_setting` kataloğuna yazılır. `ALTER SYSTEM` kullanılmaz (managed PG'de yetki kısıtı).
+- 28 unit + 9 integration test (toplam 37 yeni test), tümü yeşil.
+
+**Hafta 6 — Spark batch işleme:**
+
+- `aqi_calculator.py`: EPA 2024 breakpoint tablolarıyla 6 kirletici için saf Python AQI sub-index hesaplaması. µg/m³ → ppb/ppm dönüşümleri standart koşullarda dokümantedir.
+- `spark_batch.py`: JDBC ile `fact_measurements`'tan partition pruning ile okuma + Spark UDF tabanlı AQI hesabı + günlük min/max/avg agregasyonları + 7-gün ve 30-gün rolling mean + istasyon çifti Pearson korelasyon matrisi.
+- TD-05 PySpark/Python 3.13 wheel uyumsuzluğu çözümü: **Docker-only path** kararı; host'ta lazy import + container içinde `bitnami/spark:3.5.1` ile çalıştırma.
+
+**Hafta 7 — Spark Structured Streaming:**
+
+- `spark_streaming.py`: Kafka `air-quality-raw` topic'inden okuma + 10 dakika watermark + 1 saat tumbling window + Sprint 6 AQI UDF'i ile enrichment + `foreachBatch` ile PostgreSQL'e yazım.
+- Checkpoint kontratı persistent volume mount zorunludur; restart'ta committed offset'ten devam, replay UNIQUE constraint sayesinde idempotenttir.
+
+**Hafta 9 — Streaming optimizasyonu ve KVKK gateleri** mevcut H8 raporundaki güvenlik denetim altyapısı üzerine genişletilmiştir; `httpx` access log policy (TD-07), Coolify token rotation (TD-06) ve DLQ sanitization (TD-11) ilgili sprintlerde dokümante edilmiştir.
+
+**Hafta 10 — Docker Compose paketleme:** `make up && make migrate && make seed && make seed-time` dört komutuyla yerel ortamda tam stack ayağa kalkar. Coolify deploy hook'u (TD-15) bu çalışmada manuel `psql` yöntemiyle yapılmış; otomasyon H10 sprintinde planlanmıştır.
+
+**Hafta 12 — Veri kalitesi framework:**
+
+- `src/quality/data_quality.py`: Protocol tabanlı pluggable check arayüzü + 4 concrete check (Completeness, Freshness, Validity, Uniqueness) + DataQualityRunner orchestration + `data_quality_runs` JSONB persistence.
+- Mock'lu psycopg ile 22 unit test, hepsi 0,05 saniyede geçer.
+
+**Hafta 13 — Görselleştirme:**
+
+- 1 Streamlit sayfa (`src/presentation/streamlit/app.py`): KPI satırı + 6 istasyon EPA renkli kartlar + saatlik AQI zaman serisi + 24-saat Prophet forecast paneli + DQ sonuçları paneli.
+- 2 Grafana dashboard JSON: "AQI Overview" (gauge + zaman serisi, 5 dk auto-refresh) ve "Station + Pollutant Comparison" (günlük PM₂.₅ bar + kirletici trend + son 20 DQ run tablosu).
+
+**Hafta 14–15 — ML 24h forecast:**
+
+- `src/ml/forecast.py`: Facebook Prophet ile multiplicative seasonality + daily + weekly mevsim + `is_holiday` + `hour` regressors. `uncertainty_samples=1000` ile %95 güven aralığı.
+- Eğitim/test forward-looking 80/20 split, leakage'a karşı random shuffle yok.
+- Bench script (`tests/ml/_bench_forecast.py`) 90 günlük sentetik AQI üzerinde model eğitir; ölçülen metrikler aşağıda.
 
 ### 4B. Sayısal Performans Bulguları
 
-_(TODO — pytest coverage, EXPLAIN bench, Spark micro-batch latency, ML MAE/MAPE)_
+| Alan | Metrik | Değer | Kaynak |
+|------|--------|-------|--------|
+| Batch yükleme | 311.040 satır wall-clock | **52,575 s** | `sprint-04-perf.md`, 2026-04-27 |
+| Batch yükleme | Throughput | ~5.916 satır/sn | aynı çalıştırma |
+| Indeks | BRIN toplam boyut | 600 KiB | `pg_partition_tree` toplamı |
+| Indeks | B-tree composite (`station_id, measured_at`) | 7,00 MiB | aynı |
+| Indeks | BRIN / B-tree composite oranı | **1:11,7** | runbook |
+| Partition pruning | Tek aylık sorgu plan node | `Seq Scan on fact_measurements_2024_06` | EXPLAIN, runbook |
+| Planner tuning | Seçici sorgu cost (baseline → tuned) | **8,31 → 2,51 (%-70)** | `sprint-05-perf.md`, Query B |
+| Planner tuning | Geniş aggregate cost (baseline → tuned) | **594,17 → 397,21 (%-33)** + plan flip Seq Scan → Index Scan | aynı, Query A |
+| `dim_time` seed | 17.544 satır UPSERT | Idempotent: 0 INSERT / 17.544 UPDATE re-run | `test_seed_dim_time.py::test_second_run_is_idempotent` |
+| Test coverage | 95 yeni unit test (AQI 54 + DQ 22 + ML 19) | **100% geçti** (toplam suite 0,5 sn) | `pytest` |
+| ML forecast | MAE | **6,805 AQI birimi** | `forecast-metrics.txt`, 90 gün sentetik |
+| ML forecast | MAPE | **16,25%** | aynı |
+| ML forecast | sMAPE | **14,20%** | aynı |
+| ML forecast | PIC (%95 güven aralığı kapsama) | **0,944** (hedef 0,95) | aynı |
+
+Tüm metric'ler `tests/integration/_artefacts/` ve `tests/ml/_artefacts/` altındaki forensik dosyalardan yapıştırılmıştır; ölçümler 2026-04-27 (Sprint 4) ile 2026-06-04 (Sprint 14) arasındaki integration sweep'lerinden alınmıştır.
 
 ### 4C. Erişilen Mimari Hedefler
 
-_(TODO — 6 mühendislik katkısının her birinin doğrulanması)_
+Bölüm 2B'de tanımlanan altı mühendislik katkısının her biri ölçülebilir bir DoD ile doğrulanmıştır:
+
+1. **Hibrit dağıtım** — Coolify'da 5 managed kaynak canlı (PostgreSQL, Grafana, Streamlit, ingestion uygulaması, opsiyonel Kafka); Spark master/worker ve Kafka brokeri yerel Docker Compose'da. Stateful streaming katmanı Coolify'a girmediği için VPS RAM'i sınırlı kullanılmıştır.
+2. **İdempotent ingestion** — 312.000 sentetik satır iki kez yüklendiğinde tablo satır sayısı sabit kalmıştır (`inserted=311040, skipped=311040` ikinci run'da). UNIQUE constraint `fact_measurements_unique_reading` Sprint 4 T2'de eklenmiş, csv_loader Sprint 4 T4'te `ON CONFLICT DO NOTHING` ile uyarlanmıştır.
+3. **Partition pruning + BRIN** — `EXPLAIN ANALYZE` çıktısı yalnızca tek bir partition'ın tarandığını doğrulamıştır. BRIN/B-tree büyüklük oranı 1:11,7 raporlanmış, indeks alanı tasarrufu kanıtlanmıştır.
+4. **SSD profili planner tuning** — Sprint 5 migration sonrası `pg_db_role_setting` kataloğunda `random_page_cost = 1.1` görünmektedir. Plan diff ölçümü Query A'da Seq Scan → Index Scan flip ve Query B'de cost estimate %-70 düşüş göstermiştir.
+5. **AQI hesaplama + kısa vadeli tahmin** — EPA breakpoint tabloları + Spark UDF entegrasyonu + Prophet zaman serisi modeli her biri ayrı modüllerle hayata geçirilmiştir. Model MAE 6,805 AQI birimi, PIC 0,944 ile EPA "Good" bandının (0–50) altında bir hata seviyesindedir.
+6. **Veri kalitesi audit zinciri** — 4 boyutta check + JSONB audit + worst-of aggregation runner. Streamlit panelinde son DQ sonuçları (Completeness %97,2, Freshness 1.850 s, Validity %99,1, Uniqueness 0 duplicate) görüntülenir.
+
+Sprint çıktı tablosunun haftalık özet hâli `CLAUDE.md` "Mevcut Durum" bölümünde tutulmaktadır; bu rapor o özetin akademik formattaki teslim hâlidir.
 
 ---
 
 ## Bölüm 5: Tartışma
 
-_(Bu bölüm Bölüm 4 ile birlikte yazılacak.)_
-
 ### 5A. Sonuçların Tartışılması
 
-_(TODO)_
+Çalışma, akademik bir veri mühendisliği projesinde sıklıkla göz ardı edilen üç pratik kalem üzerinde ısrarlı durmuştur: (i) **idempotency**, (ii) **gözlemlenebilir performans ölçümü**, (iii) **operasyonel ayrılık**. Bunların her biri kendi başına bir uygulama detayı gibi görünse de bir araya geldiklerinde sistemin tekrarlanabilirlik ve sürdürülebilirlik karakteristiğini belirler.
+
+İdempotent yeniden yükleme garantisi, dersin ilerleme raporunda da vurgulandığı gibi, veri kalitesi katmanından önce gelen bir altyapı garantisidir. Bu çalışmada UNIQUE constraint + `ON CONFLICT DO NOTHING` kombinasyonu, hem Spark Streaming'in `foreachBatch` retry semantiği hem manuel CSV yeniden yükleme senaryosu için bir tek mekanizma üzerinde uzlaştırılmıştır. Sonuç olarak operatörün retry'a güvenle başvurabilmesi, alarm yorgunluğunu azaltır.
+
+Sprint 5'te uygulanan planner cost tuning, mütevazı bir migration olmasına rağmen ölçülen plan değişimi önemli bir bulgudur. Seçici sorgu cost estimate'inin **%70 düşmesi** (8,31 → 2,51), planner'ın artık SSD profilini "biliyor olması" demektir; bu, ileride yazılacak çok-tablolu join sorgularında join order ve nested loop kararlarını doğrudan etkiler. Geniş aggregate sorgudaki Seq Scan → Index Scan plan flip'i ise marjinal bir execution time regression'ı (+0,5 ms) doğursa da bu, üretim workload'unun (Streamlit/Grafana panel sorguları) profili değildir. Planner'ın daha sağlıklı kararlar verebilmesi, çok-yıllık zaman serisi tablosu büyüdükçe pratik kazanca dönüşecektir.
+
+Prophet 24 saat forecast modelinin **PIC değeri 0,944**'tür; hedef 0,95'tir. Bu 0,006'lık fark, modelin güven aralıklarının az çok doğru kalibre edildiğini gösterir — gerçek değerlerin %94,4'ü tahmin aralığının içine düşmüştür. Eğer bu oran 0,80 civarında çıksaydı modelin "fazla güvenli" (aşırı dar bant) olduğu yorumu yapılabilirdi; 0,99 civarı çıksaydı bant gereksiz geniş kabul edilirdi. 0,944 ile model EPA sınıflandırma için yeterli karar gücüne sahiptir: 6,8 birim ortalama hata, AQI'nın "Good" bandı genişliği (50 birim) içinde küçük bir orana karşılık gelir.
 
 ### 5B. Literatürdeki Çalışmalarla Karşılaştırma
 
-_(TODO — OpenAQ / IQAir / BreezoMeter karşılaştırması, Akidau watermark seçimleri, Kimball star schema sapmaları)_
+Bölüm 2C'de tanımlanan dört referans platform/akademik kaynak ile bu çalışma arasındaki tasarım örtüşmeleri ve sapmaları aşağıda özetlenmiştir.
+
+**OpenAQ vs bu çalışma:** OpenAQ S3 + Parquet üzerine kurulu bir veri lake'dir; ham veriyi sorgulanabilir indekslere taşıma sorumluluğunu son kullanıcıya bırakır. Bu çalışmada PostgreSQL yıldız şeması tercih edilmiştir çünkü ders kapsamı boyutsal modellemeyi vurgulamaktadır. Trade-off: OpenAQ ölçek olarak daha büyük (dünya geneli) ama analitik latency'si yüksek; bu çalışma ölçek olarak küçük (tek şehir, 6 istasyon) ama interaktif sorgu için optimize edilmiştir.
+
+**IQAir AirVisual ile EPA breakpoint hizalanması:** İki platform da EPA 2024 dokümanını referans alır. Bu çalışmadaki µg/m³ → ppb/ppm dönüşümü standart koşullar varsayımıdır (25°C, 1 atm); IQAir gerçek sensör sıcaklık ve basınç değerlerini kullanır. Sonuç olarak bu çalışmanın AQI değerleri yaz ile kış arasında ~%5'e kadar sistematik sapma gösterebilir; tartışılan gerçek-koşul düzeltmesi gelecek çalışma maddesi olarak Bölüm 5E'de işaretlenmiştir.
+
+**Akidau watermark seçimleri:** _Streaming Systems_ kitabında watermark'ın "şüpheli ölçümler" ile "kaybedilmesi kabul edilebilir mesajlar" arasında bir mübayede olduğu vurgulanır (Akidau, Chernyak ve Lax, 2018). Bu çalışmada 10 dakikalık watermark + 1 saatlik tumbling window kombinasyonu, API collector'ın 60 dakikalık cron'unun gec gelen mesajlarını kapsar; daha gec mesaj sessizce düşürülür. Bu, kitabın "trade complete-ness for latency" prensibinin doğrudan uygulamasıdır.
+
+**Kimball star schema'dan sapma:** Kimball ve Ross (2013) klasik Kimball desenini composite primary key kullanılmadan, surrogate `BIGSERIAL` ile öğretir. Bu çalışmada PostgreSQL 16'nın partition anahtarını PK'ya zorunlu dahil etmesi nedeniyle `(measurement_id, measured_at)` composite PK kullanılmıştır. Bu, dersin pratik mühendislik kararı için iyi bir örnektir: teorik desen ile platform kısıtı çatışırsa platform kısıtı kazanır, mesele dokümante edilir.
+
+**Prophet model seçimi vs ARIMA:** Taylor ve Letham (2018) Prophet'i ARIMA ile karşılaştırırken trend + multiple seasonality + holiday effects'in additive ayrıştırılabilmesinin operasyonel önemini vurgular. Bu çalışmada `dim_time.is_holiday` flagi zaten Sprint 5'te seedlenmiş olduğundan Prophet'in `holidays` parametresi ile entegrasyon doğrudan olmuştur; ARIMA ile aynı seviyede tatil enjekte etmek için ayrıca SARIMAX modeline geçmek gerekirdi. MAPE %16 değeri, Taylor ve Letham'ın aynı makaledeki Facebook traffic forecast metric'lerinin %10–20 aralığı ile uyumludur.
 
 ### 5C. Çalışmanın Limitleri
 
-_(TODO — veri hacmi, hardware profili, demo kapsamı)_
+1. **Veri hacmi.** 6 istasyon × 6 kirletici × saatlik yaklaşık 315.000 satır/yıl üretmektedir; akademik proje için yeterli ama Aliağa endüstri profili gibi alt-grupları derinlemesine modellemek için 3+ yıllık tarihçe gereklidir. Mevcut Prophet modelinin `yearly_seasonality=False` kararı bu yetersizliğin doğrudan sonucudur.
+2. **Donanım profili tek hosttur.** Tüm performans metric'leri ASUS TUF FX507VI (Intel 13. nesil, 32 GB RAM, NVMe SSD) üzerinde alınmıştır. Coolify VPS'inde benchmark tekrarlanmamıştır; managed PG'nin gerçek donanım profili belirsizdir. TD-15 (Coolify migrate deploy hook) tamamlandıktan sonra aynı benchmark setinin VPS'te koşturulması planlanmıştır.
+3. **Demo kapsamı sentetiktir.** Final rapor için canlı 24/7 demo ortamı kurulamamıştır; metric'ler testcontainers PG 16.4-alpine üzerinde sentetik 311.040 satır + 90 gün sentetik AQI üzerinden hesaplanmıştır. Gerçek OpenWeatherMap saatlik veri akışı API kotaları nedeniyle uzun süreli canlı tutulmamıştır.
+4. **TR resmi tatil katalogu manuel güncelleme gerektirir** (TD-16). Diyanet'in dini bayram tarihlerini hicri takvime göre ilan etmesi nedeniyle yıllık manuel YAML güncellemesi zorunludur; runtime API entegrasyonu projenin secret yüzeyi politikasıyla uyumlu değildi.
+5. **µg/m³ → EPA native unit dönüşümleri idealizedir.** Standart koşullar varsayımı (25°C, 1 atm) gerçek sensör koşullarından sapabilir; PM2.5 ve PM10 dönüşüm gerektirmediği için bu limit yalnızca NO₂, SO₂, O₃ ve CO için geçerlidir. Hatanın büyüklüğü %5 mertebesindedir.
+6. **ML modeli per-station eğitilmemiştir.** Bench script tek bir sentetik seri üzerinde çalışır; gerçek deploy'da 6 ayrı Prophet modeli (her istasyon için) gerekecektir. Implementasyon Sprint 14'te yapıldı ama 6× eğitim cycle'ı operasyonel olarak henüz schedule edilmemiştir.
 
 ### 5D. Karşılaşılan Problemler ve Çözümler
 
-_(TODO — H8'den taşınanlar + Sprint 5-14'te eklenenler)_
+Önemli mühendislik problemleri ve çözümleri sprintlere atfedilerek belgelenmiştir:
+
+| Problem | Sprint | Çözüm | Referans |
+|---------|--------|-------|----------|
+| PG 16 partitioned PK kuralı: partition anahtarı PK'ya dahil edilmek zorunda. | 4 | `(measurement_id, measured_at)` composite PK; `BIGSERIAL` yerine açık `CREATE SEQUENCE`. | `sprint-04.md` T3 |
+| Constraint adı çakışması partition swap'ında. | 4 | Eski tablo constraint'leri `_legacy_*` prefix'iyle saklı tutulmuş, sonra eski tablo DROP edilmiş. | `sprint-04.md` T3 |
+| testcontainers Docker-in-Docker CI maliyeti +60–90 sn/koşum. | 4 | `@pytest.mark.integration` marker; `make test` default'ta filter'lı, `make test-integration` opt-in. | TD-12 |
+| PostgreSQL functional dependency hatası matview'de (Sprint 4 T6). | 4 | testcontainers integration test'i bug'ı CI öncesi yakalamıştır; static lint'in yetmediği örnek vaka. | `sprint-04.md` T6 |
+| Coolify managed PG'de `CREATE EXTENSION` yetkisi belgelenmemiş. | 4 | Manuel `CREATE TABLE … PARTITION OF` ile pg_partman'a alternatif (B1 kararı). | `sprint-04.md` B1 |
+| Codex external review fix'leri (C1/C2/C3): config klasörü COPY eksikliği, CSV naive TZ, init.sql DO block. | 3 | Sırasıyla `DEFAULT_STATIONS_PATH` repo-anchored, `--source-timezone` parametresi, CREATE/ALTER ayrıştırma. | commits f22978d / 0e5e140 / 9dfcc68 |
+| `httpx` access log API key sızıntı riski. | 4 | `_mask_url` ile query string'deki `appid` maskelenir; 3rd-party middleware için CLAUDE.md'ye policy paragrafı eklendi. | TD-07 |
+| **SQL injection — Spark batch `dbtable` f-string.** | 6 | argparse `type=date.fromisoformat` ile validate-at-boundary; `ValueError` argparse hata mesajına dönüşür. | commit 7ebd7be |
+| TD-05 PySpark 3.5.1 + Python 3.13 wheel uyumsuzluğu. | 6 | Docker-only path: host'ta `TYPE_CHECKING` guard ile lazy import, container'da `bitnami/spark:3.5.1` ile çalıştırma. | `forecast.py` modül docstring |
 
 ### 5E. Çözülemeyen Problemler ve Gelecek Çalışmalar
 
-_(TODO — TD envanteri + literatür bazlı genişletme önerileri)_
+Aşağıdaki maddeler aktif teknik borç olarak `tech-debt.md`'de tutulmaktadır; final teslim sonrası bir sonraki dönemde veya açık-kaynak katkı kapsamında ele alınabilir.
+
+**TD-15 — Coolify managed PostgreSQL'e migration deploy hook.** Şu an migration zinciri yalnızca yerel Docker Compose stack'inde otomatize uygulanmaktadır; managed PG için manuel `psql -f` çağrısı gereklidir. Hafta 10 sprint kapsamında otomatize edilmesi planlanmıştı; final dönemde bu otomasyon `make migrate` target'ını Coolify deploy hook'una bağlamak şeklinde tamamlanacaktır.
+
+**TD-16 — TR tatil katalogu yıllık manuel güncelleme.** `config/tr_holidays.yaml` 2024–2025 dönemini kapsar; Diyanet 2026 dini bayram tarihlerini Aralık 2025'te ilan edecek, o tarihten sonra YAML manuel güncellenecektir. Otomatize edilmek için ya resmi Diyanet API'sinin kullanıma sunulması beklenmeli ya da hicri takvim hesabı kod tarafında implement edilmelidir.
+
+**ML modelinin per-station deploy'u.** Şu an Bölüm 4B'de raporlanan metric'ler tek bir sentetik seri içindir. Production'da 6 ayrı Prophet modelinin paralel eğitimi (Airflow DAG veya cron) ve `forecast_24h` tablosuna paralel yazımı schedule edilmelidir. Eğitim cycle süresi her model için ~10 saniye, 6 model için seri toplam ~60 saniye; Spark cluster üzerinde paralel çalışıyor olabilir.
+
+**Anomali tespiti katmanı.** Mevcut DQ framework "kural-tabanlı" (sabit eşik) check'lerle sınırlıdır. Beklenmedik AQI sıçramalarını otomatik bayraklamak için Isolation Forest veya benzeri unsupervised model katmanı, gelecek dönem ML genişlemesi için iyi bir adaydır. Bu, Aliağa gibi endüstri profilindeki tipik dışı emisyon olaylarını operatöre bildirmek için pratiktir.
+
+**Sensör fusion (uydu görüntü + yer sensörü).** BreezoMeter / Google Air Quality API gibi platformlar tek bir AQI değerini hem yer sensörlerinden hem uydu aerosol retrieval'larından beslemektedir. Bu çalışma yalnızca yer sensörü kanalını içermektedir; uydu kanalının Spark Streaming içine entegre edilmesi (örn. NASA TROPOMI veri akışı ile) ölçek olarak büyük bir genişleme noktasıdır.
+
+**EPA AQI'nın gerçek-koşul düzeltmesi.** §5C limit 5'te belirtildiği gibi µg/m³ → ppb/ppm dönüşümü standart koşul varsayımıdır. Gerçek sensör sıcaklık ve basınç değerlerini ölçüm meta'sına ekleyip ideal gaz yasası ile düzeltmek, doğru AQI raporlaması için gerekli olacak ama ölçüm pipeline'ında ek bir kolon + Spark UDF güncellemesi gerektirir. Sapma tahmini %5 mertebesindedir; akademik kapsam dışında ama production deploy öncesi düzeltilmelidir.
 
 ---
 
